@@ -222,10 +222,11 @@ static inline void finalize_host_with_port(struct http_parser_url *u,
 
 /* Initialize all http_parser_url members to 0 - avoid memset overhead */
 void http_parser_url_init(struct http_parser_url *u) {
+  size_t i;
   u->field_set = 0;
   u->port = 0;
   /* Initialize field_data array explicitly to avoid uninitialized memory */
-  for (int i = 0; i < UF_MAX; i++) {
+  for (i = 0; i < UF_MAX; i++) {
     u->field_data[i].off = 0;
     u->field_data[i].len = 0;
   }
@@ -242,6 +243,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   unsigned char ch;
   size_t port_start = 0; /* Track port position during host parsing */
   int found_colon = 0;   /* Flag to track if we found : in host */
+  int bracket_depth = 0; /* Track IPv6 bracket depth to avoid rescanning */
   
   /* Initialize the URL structure - optimized to avoid memset */
   http_parser_url_init(u);
@@ -320,6 +322,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         state = s_server;
         found_colon = 0;
         port_start = 0;
+        bracket_depth = 0;
         /* Fall through to s_server */
         /* FALLTHROUGH */
         
@@ -358,23 +361,22 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           mark_field(u, field);
           found_colon = 0;
           port_start = 0;
-        } else if (ch == ':') {
-          /* Mark potential port position only if not in IPv6 brackets */
-          /* Look back from current position to see if we're inside brackets */
-          int in_brackets = 0;
-          for (size_t j = field_start; j < i; j++) {
-            if (buf[j] == '[') {
-              in_brackets++;
-            } else if (buf[j] == ']') {
-              in_brackets--;
-            }
+          bracket_depth = 0;
+        } else if (ch == '[') {
+          bracket_depth++;
+        } else if (ch == ']') {
+          bracket_depth--;
+          /* Detect malformed brackets */
+          if (UNLIKELY(bracket_depth < 0)) {
+            return 1; /* Extra closing bracket */
           }
+        } else if (ch == ':') {
           /* Only treat as port separator if we're not in brackets and haven't found colon yet */
-          if (in_brackets == 0 && !found_colon) {
+          if (bracket_depth == 0 && !found_colon) {
             found_colon = 1;
             port_start = i + 1;
           }
-        } else if (is_userinfo_char(ch) || ch == '[' || ch == ']') {
+        } else if (is_userinfo_char(ch)) {
           /* Valid server character */
         } else {
           return 1; /* Invalid character in server */
