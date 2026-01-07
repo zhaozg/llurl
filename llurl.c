@@ -40,7 +40,7 @@ enum state {
 
 /* Character classification lookup tables for performance */
 
-/* Check if character is alphanumeric */
+/* Lookup table for valid URL characters */
 static const unsigned char normal_url_char[256] = {
 /*   0 nul    1 soh    2 stx    3 etx    4 eot    5 enq    6 ack    7 bel  */
         0,       0,       0,       0,       0,       0,       0,       0,
@@ -137,6 +137,38 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
   
   *port = (uint16_t)val;
   return 0;
+}
+
+/* Extract port from host field if present */
+static void extract_port_from_host(struct http_parser_url *u, const char *buf) {
+  if (!(u->field_set & (1 << UF_HOST)) || u->field_data[UF_HOST].len == 0) {
+    return;
+  }
+  
+  const char *host_start = buf + u->field_data[UF_HOST].off;
+  size_t host_len = u->field_data[UF_HOST].len;
+  size_t j;
+  
+  /* Look for : separating host and port */
+  for (j = host_len; j > 0; j--) {
+    if (host_start[j-1] == ':') {
+      /* Found port separator */
+      if (j < host_len) {
+        uint16_t port_val;
+        if (parse_port(host_start + j, host_len - j, &port_val) == 0) {
+          u->port = port_val;
+          u->field_data[UF_HOST].len = j - 1;
+          mark_field(u, UF_PORT);
+          u->field_data[UF_PORT].off = u->field_data[UF_HOST].off + j;
+          u->field_data[UF_PORT].len = host_len - j;
+        }
+      }
+      break;
+    } else if (host_start[j-1] == ']') {
+      /* IPv6 address, stop looking for port */
+      break;
+    }
+  }
 }
 
 /* Initialize all http_parser_url members to 0 */
@@ -240,32 +272,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           u->field_data[field].len = i - field_start;
           
           /* Check for port in host */
-          if (u->field_data[UF_HOST].len > 0) {
-            const char *host_start = buf + u->field_data[UF_HOST].off;
-            size_t host_len = u->field_data[UF_HOST].len;
-            size_t j;
-            
-            /* Look for : separating host and port */
-            for (j = host_len; j > 0; j--) {
-              if (host_start[j-1] == ':') {
-                /* Found port separator */
-                if (j < host_len) {
-                  uint16_t port_val;
-                  if (parse_port(host_start + j, host_len - j, &port_val) == 0) {
-                    u->port = port_val;
-                    u->field_data[UF_HOST].len = j - 1;
-                    mark_field(u, UF_PORT);
-                    u->field_data[UF_PORT].off = u->field_data[UF_HOST].off + j;
-                    u->field_data[UF_PORT].len = host_len - j;
-                  }
-                }
-                break;
-              } else if (host_start[j-1] == ']') {
-                /* IPv6 address, stop looking for port */
-                break;
-              }
-            }
-          }
+          extract_port_from_host(u, buf);
           
           field = UF_PATH;
           field_start = i;
@@ -366,31 +373,8 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     u->field_data[field].len = i - field_start;
     
     /* Special handling for host field - extract port if present */
-    if (field == UF_HOST && u->field_data[UF_HOST].len > 0) {
-      const char *host_start = buf + u->field_data[UF_HOST].off;
-      size_t host_len = u->field_data[UF_HOST].len;
-      size_t j;
-      
-      /* Look for : separating host and port */
-      for (j = host_len; j > 0; j--) {
-        if (host_start[j-1] == ':') {
-          /* Found port separator */
-          if (j < host_len) {
-            uint16_t port_val;
-            if (parse_port(host_start + j, host_len - j, &port_val) == 0) {
-              u->port = port_val;
-              u->field_data[UF_HOST].len = j - 1;
-              mark_field(u, UF_PORT);
-              u->field_data[UF_PORT].off = u->field_data[UF_HOST].off + j;
-              u->field_data[UF_PORT].len = host_len - j;
-            }
-          }
-          break;
-        } else if (host_start[j-1] == ']') {
-          /* IPv6 address, stop looking for port */
-          break;
-        }
-      }
+    if (field == UF_HOST) {
+      extract_port_from_host(u, buf);
     }
   }
   

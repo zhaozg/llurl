@@ -14,11 +14,11 @@ LIB_SHARED = libllurl.so
 TEST_SRC = test_llurl.c
 TEST_BIN = test_llurl
 
-# Benchmark (optional)
-BENCH_SRC = benchmark.c
-BENCH_BIN = benchmark
+# Example
+EXAMPLE_SRC = example.c
+EXAMPLE_BIN = example
 
-.PHONY: all clean test benchmark
+.PHONY: all clean test example run-example
 
 all: $(LIB_STATIC) $(LIB_SHARED)
 
@@ -38,13 +38,20 @@ $(LIB_OBJ): $(LIB_SRC) llurl.h
 $(TEST_BIN): $(TEST_SRC) $(LIB_STATIC)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_STATIC)
 
-# Benchmark binary (if benchmark.c exists)
-$(BENCH_BIN): $(BENCH_SRC) $(LIB_STATIC)
+# Example binary
+$(EXAMPLE_BIN): $(EXAMPLE_SRC) $(LIB_STATIC)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_STATIC)
 
 # Run tests
 test: $(TEST_BIN)
 	./$(TEST_BIN)
+
+# Build example
+example: $(EXAMPLE_BIN)
+
+# Run example
+run-example: $(EXAMPLE_BIN)
+	./$(EXAMPLE_BIN)
 
 # Debug build
 debug: CFLAGS = $(DEBUG_CFLAGS)
@@ -52,7 +59,7 @@ debug: clean $(TEST_BIN)
 	./$(TEST_BIN)
 
 clean:
-	rm -f $(LIB_OBJ) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN) $(BENCH_BIN)
+	rm -f $(LIB_OBJ) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN) $(EXAMPLE_BIN)
 
 # Install (optional)
 install: $(LIB_STATIC) $(LIB_SHARED)
