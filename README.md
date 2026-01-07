@@ -190,7 +190,9 @@ make run-benchmark
 
 ## Design
 
-The parser is implemented as a deterministic finite automaton (DFA) with the following states:
+The parser is implemented as a deterministic finite automaton (DFA) using a hybrid table-based approach:
+
+### State Machine States
 
 - `s_start`: Initial state, determines URL type
 - `s_schema`: Parsing scheme (http, https, etc.)
@@ -201,7 +203,19 @@ The parser is implemented as a deterministic finite automaton (DFA) with the fol
 - `s_query`: Parsing query string
 - `s_fragment`: Parsing fragment identifier
 
-Character classification is performed using pre-computed lookup tables for maximum performance.
+### Lookup Table Optimization
+
+The implementation uses a DFA table-based approach for optimal performance:
+
+1. **Character Classification Table** (`char_class_table[256]`): Maps each byte to one of 29 character classes for O(1) character classification
+2. **State Transition Table** (`url_state_table[state][char_class]`): Defines state transitions for all valid state-character combinations
+3. **Hybrid Approach**: Fast-path optimization for simple states (schema, path, query, fragment) using table lookups, while complex states (server parsing with IPv6, port, userinfo) use direct handling for optimal performance
+
+This approach provides:
+- **Minimal branching** for common parsing paths
+- **Cache-friendly** memory access patterns with pre-computed tables
+- **Explicit state machine** representation for maintainability
+- **Single-pass parsing** with no backtracking
 
 ## License
 
