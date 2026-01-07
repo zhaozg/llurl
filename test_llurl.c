@@ -251,6 +251,28 @@ void test_invalid_url_bad_schema() {
   printf("✓ Bad schema correctly rejected\n\n");
 }
 
+void test_complex_url_with_all_components() {
+  printf("=== Test: Complex URL with all components ===\n");
+  const char *url = "http://dev:123456@hello.com:8080/some/path?with=1%23&args=value#hash";
+  struct http_parser_url u;
+  
+  int result = http_parser_parse_url(url, strlen(url), 0, &u);
+  assert(result == 0);
+  
+  print_url_result(url, &u);
+  
+  assert(check_field(url, &u, UF_SCHEMA, "http"));
+  assert(check_field(url, &u, UF_USERINFO, "dev:123456"));
+  assert(check_field(url, &u, UF_HOST, "hello.com"));
+  assert(check_field(url, &u, UF_PORT, "8080"));
+  assert(u.port == 8080);
+  assert(check_field(url, &u, UF_PATH, "/some/path"));
+  assert(check_field(url, &u, UF_QUERY, "with=1%23&args=value"));
+  assert(check_field(url, &u, UF_FRAGMENT, "hash"));
+  
+  printf("✓ Complex URL with all components test passed\n\n");
+}
+
 int main() {
   printf("Running llurl tests...\n\n");
   
@@ -266,6 +288,7 @@ int main() {
   test_root_path();
   test_invalid_url_empty();
   test_invalid_url_bad_schema();
+  test_complex_url_with_all_components();
   
   printf("===================================\n");
   printf("All tests passed! ✓\n");
