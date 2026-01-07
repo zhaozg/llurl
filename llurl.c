@@ -35,7 +35,42 @@ enum state {
   s_path,
   s_query_or_fragment,
   s_query,
-  s_fragment
+  s_fragment,
+  s_num_states
+};
+
+/* Character classes for DFA table */
+enum char_class {
+  cc_invalid = 0,     /* Invalid characters */
+  cc_alpha,           /* a-z, A-Z */
+  cc_digit,           /* 0-9 */
+  cc_slash,           /* / */
+  cc_colon,           /* : */
+  cc_question,        /* ? */
+  cc_hash,            /* # */
+  cc_at,              /* @ */
+  cc_dot,             /* . */
+  cc_dash,            /* - */
+  cc_plus,            /* + */
+  cc_percent,         /* % */
+  cc_ampersand,       /* & */
+  cc_equals,          /* = */
+  cc_semicolon,       /* ; */
+  cc_dollar,          /* $ */
+  cc_exclamation,     /* ! */
+  cc_asterisk,        /* * */
+  cc_comma,           /* , */
+  cc_lparen,          /* ( */
+  cc_rparen,          /* ) */
+  cc_apostrophe,      /* ' */
+  cc_underscore,      /* _ */
+  cc_tilde,           /* ~ */
+  cc_lbracket,        /* [ */
+  cc_rbracket,        /* ] */
+  cc_pipe,            /* | */
+  cc_lbrace,          /* { */
+  cc_rbrace,          /* } */
+  cc_num_char_classes
 };
 
 /* Character classification lookup tables for performance */
@@ -123,6 +158,59 @@ static const unsigned char userinfo_char[256] = {
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
+/* Character class lookup table for DFA - maps each byte to a character class */
+static const unsigned char char_class_table[256] = {
+/*   0 nul    1 soh    2 stx    3 etx    4 eot    5 enq    6 ack    7 bel  */
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+/*   8 bs     9 ht    10 nl    11 vt    12 np    13 cr    14 so    15 si   */
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+/*  16 dle   17 dc1   18 dc2   19 dc3   20 dc4   21 nak   22 syn   23 etb */
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+/*  24 can   25 em    26 sub   27 esc   28 fs    29 gs    30 rs    31 us  */
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+/*  32 sp    33  !    34  "    35  #    36  $    37  %    38  &    39  '  */
+  cc_invalid,cc_exclamation,cc_invalid,cc_hash,cc_dollar,cc_percent,cc_ampersand,cc_apostrophe,
+/*  40  (    41  )    42  *    43  +    44  ,    45  -    46  .    47  /  */
+  cc_lparen,cc_rparen,cc_asterisk,cc_plus,cc_comma,cc_dash,cc_dot,cc_slash,
+/*  48  0    49  1    50  2    51  3    52  4    53  5    54  6    55  7  */
+  cc_digit,cc_digit,cc_digit,cc_digit,cc_digit,cc_digit,cc_digit,cc_digit,
+/*  56  8    57  9    58  :    59  ;    60  <    61  =    62  >    63  ?  */
+  cc_digit,cc_digit,cc_colon,cc_semicolon,cc_invalid,cc_equals,cc_invalid,cc_question,
+/*  64  @    65  A    66  B    67  C    68  D    69  E    70  F    71  G  */
+  cc_at,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,
+/*  72  H    73  I    74  J    75  K    76  L    77  M    78  N    79  O  */
+  cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,
+/*  80  P    81  Q    82  R    83  S    84  T    85  U    86  V    87  W  */
+  cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,
+/*  88  X    89  Y    90  Z    91  [    92  \    93  ]    94  ^    95  _  */
+  cc_alpha,cc_alpha,cc_alpha,cc_lbracket,cc_invalid,cc_rbracket,cc_invalid,cc_underscore,
+/*  96  `    97  a    98  b    99  c   100  d   101  e   102  f   103  g  */
+  cc_invalid,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,
+/* 104  h   105  i   106  j   107  k   108  l   109  m   110  n   111  o  */
+  cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,
+/* 112  p   113  q   114  r   115  s   116  t   117  u   118  v   119  w  */
+  cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,cc_alpha,
+/* 120  x   121  y   122  z   123  {   124  |   125  }   126  ~   127 del */
+  cc_alpha,cc_alpha,cc_alpha,cc_lbrace,cc_pipe,cc_rbrace,cc_tilde,cc_invalid,
+/* 128-255: Extended ASCII - all invalid */
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,
+  cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid
+};
+
 /* Branch prediction hints for performance */
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
@@ -131,6 +219,256 @@ static const unsigned char userinfo_char[256] = {
 #define LIKELY(x) (x)
 #define UNLIKELY(x) (x)
 #endif
+
+/* DFA state transition table: url_state_table[current_state][char_class] = next_state
+ * This table drives the state machine, eliminating most switch-case overhead
+ * s_dead (0) indicates an error/invalid transition
+ * Special value 0xFF means "stay in current state"
+ */
+#define STAY 0xFF
+static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = {
+  /* s_dead - error state, all transitions lead to dead */
+  { s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
+  
+  /* s_start - initial state */
+  { s_dead,       /* cc_invalid */
+    s_schema,     /* cc_alpha - start of schema */
+    s_dead,       /* cc_digit */
+    s_path,       /* cc_slash - relative URL */
+    s_dead,       /* cc_colon */
+    s_dead,       /* cc_question */
+    s_dead,       /* cc_hash */
+    s_dead,       /* cc_at */
+    s_dead,       /* cc_dot */
+    s_dead,       /* cc_dash */
+    s_dead,       /* cc_plus */
+    s_dead,       /* cc_percent */
+    s_dead,       /* cc_ampersand */
+    s_dead,       /* cc_equals */
+    s_dead,       /* cc_semicolon */
+    s_dead,       /* cc_dollar */
+    s_dead,       /* cc_exclamation */
+    s_path,       /* cc_asterisk - * for asterisk-form */
+    s_dead,       /* cc_comma */
+    s_dead,       /* cc_lparen */
+    s_dead,       /* cc_rparen */
+    s_dead,       /* cc_apostrophe */
+    s_dead,       /* cc_underscore */
+    s_dead,       /* cc_tilde */
+    s_dead,       /* cc_lbracket */
+    s_dead,       /* cc_rbracket */
+    s_dead,       /* cc_pipe */
+    s_dead,       /* cc_lbrace */
+    s_dead },     /* cc_rbrace */
+  
+  /* s_schema - parsing schema (http, https, etc.) */
+  { s_dead,       /* cc_invalid */
+    STAY,         /* cc_alpha */
+    STAY,         /* cc_digit */
+    s_dead,       /* cc_slash */
+    s_schema_slash, /* cc_colon - end of schema */
+    s_dead,       /* cc_question */
+    s_dead,       /* cc_hash */
+    s_dead,       /* cc_at */
+    STAY,         /* cc_dot */
+    STAY,         /* cc_dash */
+    STAY,         /* cc_plus */
+    s_dead,       /* cc_percent */
+    s_dead,       /* cc_ampersand */
+    s_dead,       /* cc_equals */
+    s_dead,       /* cc_semicolon */
+    s_dead,       /* cc_dollar */
+    s_dead,       /* cc_exclamation */
+    s_dead,       /* cc_asterisk */
+    s_dead,       /* cc_comma */
+    s_dead,       /* cc_lparen */
+    s_dead,       /* cc_rparen */
+    s_dead,       /* cc_apostrophe */
+    s_dead,       /* cc_underscore */
+    s_dead,       /* cc_tilde */
+    s_dead,       /* cc_lbracket */
+    s_dead,       /* cc_rbracket */
+    s_dead,       /* cc_pipe */
+    s_dead,       /* cc_lbrace */
+    s_dead },     /* cc_rbrace */
+  
+  /* s_schema_slash - expect first / after schema: */
+  { s_dead, s_dead, s_dead, s_schema_slash_slash, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
+  
+  /* s_schema_slash_slash - expect second / after schema:/ */
+  { s_dead, s_dead, s_dead, s_server_start, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
+  
+  /* s_server_start - start of server/host, handled specially in code */
+  { s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
+  
+  /* s_server - parsing server/host */
+  { s_dead,       /* cc_invalid */
+    STAY,         /* cc_alpha */
+    STAY,         /* cc_digit */
+    s_path,       /* cc_slash - end of host, start path */
+    STAY,         /* cc_colon - port separator or IPv6 */
+    s_query_or_fragment, /* cc_question - start query */
+    s_dead,       /* cc_hash */
+    s_server_with_at, /* cc_at - previous was userinfo */
+    STAY,         /* cc_dot */
+    STAY,         /* cc_dash */
+    STAY,         /* cc_plus */
+    STAY,         /* cc_percent */
+    STAY,         /* cc_ampersand */
+    STAY,         /* cc_equals */
+    STAY,         /* cc_semicolon */
+    STAY,         /* cc_dollar */
+    STAY,         /* cc_exclamation */
+    STAY,         /* cc_asterisk */
+    STAY,         /* cc_comma */
+    STAY,         /* cc_lparen */
+    STAY,         /* cc_rparen */
+    STAY,         /* cc_apostrophe */
+    STAY,         /* cc_underscore */
+    STAY,         /* cc_tilde */
+    STAY,         /* cc_lbracket - IPv6 */
+    STAY,         /* cc_rbracket - IPv6 */
+    STAY,         /* cc_pipe */
+    STAY,         /* cc_lbrace */
+    STAY },       /* cc_rbrace */
+  
+  /* s_server_with_at - parsing server after @ (cannot have another @) */
+  { s_dead,       /* cc_invalid */
+    STAY,         /* cc_alpha */
+    STAY,         /* cc_digit */
+    s_path,       /* cc_slash */
+    STAY,         /* cc_colon */
+    s_query_or_fragment, /* cc_question */
+    s_dead,       /* cc_hash */
+    s_dead,       /* cc_at - double @ not allowed */
+    STAY,         /* cc_dot */
+    STAY,         /* cc_dash */
+    STAY,         /* cc_plus */
+    STAY,         /* cc_percent */
+    STAY,         /* cc_ampersand */
+    STAY,         /* cc_equals */
+    STAY,         /* cc_semicolon */
+    STAY,         /* cc_dollar */
+    STAY,         /* cc_exclamation */
+    STAY,         /* cc_asterisk */
+    STAY,         /* cc_comma */
+    STAY,         /* cc_lparen */
+    STAY,         /* cc_rparen */
+    STAY,         /* cc_apostrophe */
+    STAY,         /* cc_underscore */
+    STAY,         /* cc_tilde */
+    STAY,         /* cc_lbracket */
+    STAY,         /* cc_rbracket */
+    STAY,         /* cc_pipe */
+    STAY,         /* cc_lbrace */
+    STAY },       /* cc_rbrace */
+  
+  /* s_path - parsing path */
+  { s_dead,       /* cc_invalid */
+    STAY,         /* cc_alpha */
+    STAY,         /* cc_digit */
+    STAY,         /* cc_slash */
+    STAY,         /* cc_colon */
+    s_query_or_fragment, /* cc_question */
+    s_query_or_fragment, /* cc_hash */
+    STAY,         /* cc_at */
+    STAY,         /* cc_dot */
+    STAY,         /* cc_dash */
+    STAY,         /* cc_plus */
+    STAY,         /* cc_percent */
+    STAY,         /* cc_ampersand */
+    STAY,         /* cc_equals */
+    STAY,         /* cc_semicolon */
+    STAY,         /* cc_dollar */
+    STAY,         /* cc_exclamation */
+    STAY,         /* cc_asterisk */
+    STAY,         /* cc_comma */
+    STAY,         /* cc_lparen */
+    STAY,         /* cc_rparen */
+    STAY,         /* cc_apostrophe */
+    STAY,         /* cc_underscore */
+    STAY,         /* cc_tilde */
+    STAY,         /* cc_lbracket */
+    STAY,         /* cc_rbracket */
+    STAY,         /* cc_pipe */
+    STAY,         /* cc_lbrace */
+    STAY },       /* cc_rbrace */
+  
+  /* s_query_or_fragment - determining whether ? or # comes next */
+  { s_dead, s_dead, s_dead, s_dead, s_dead, s_query, s_fragment, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
+    s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
+  
+  /* s_query - parsing query string */
+  { s_dead,       /* cc_invalid */
+    STAY,         /* cc_alpha */
+    STAY,         /* cc_digit */
+    STAY,         /* cc_slash */
+    STAY,         /* cc_colon */
+    STAY,         /* cc_question - ? allowed in query */
+    s_fragment,   /* cc_hash - start fragment */
+    STAY,         /* cc_at */
+    STAY,         /* cc_dot */
+    STAY,         /* cc_dash */
+    STAY,         /* cc_plus */
+    STAY,         /* cc_percent */
+    STAY,         /* cc_ampersand */
+    STAY,         /* cc_equals */
+    STAY,         /* cc_semicolon */
+    STAY,         /* cc_dollar */
+    STAY,         /* cc_exclamation */
+    STAY,         /* cc_asterisk */
+    STAY,         /* cc_comma */
+    STAY,         /* cc_lparen */
+    STAY,         /* cc_rparen */
+    STAY,         /* cc_apostrophe */
+    STAY,         /* cc_underscore */
+    STAY,         /* cc_tilde */
+    STAY,         /* cc_lbracket */
+    STAY,         /* cc_rbracket */
+    STAY,         /* cc_pipe */
+    STAY,         /* cc_lbrace */
+    STAY },       /* cc_rbrace */
+  
+  /* s_fragment - parsing fragment */
+  { s_dead,       /* cc_invalid */
+    STAY,         /* cc_alpha */
+    STAY,         /* cc_digit */
+    STAY,         /* cc_slash */
+    STAY,         /* cc_colon */
+    STAY,         /* cc_question - ? allowed in fragment */
+    STAY,         /* cc_hash - # allowed in fragment */
+    STAY,         /* cc_at */
+    STAY,         /* cc_dot */
+    STAY,         /* cc_dash */
+    STAY,         /* cc_plus */
+    STAY,         /* cc_percent */
+    STAY,         /* cc_ampersand */
+    STAY,         /* cc_equals */
+    STAY,         /* cc_semicolon */
+    STAY,         /* cc_dollar */
+    STAY,         /* cc_exclamation */
+    STAY,         /* cc_asterisk */
+    STAY,         /* cc_comma */
+    STAY,         /* cc_lparen */
+    STAY,         /* cc_rparen */
+    STAY,         /* cc_apostrophe */
+    STAY,         /* cc_underscore */
+    STAY,         /* cc_tilde */
+    STAY,         /* cc_lbracket */
+    STAY,         /* cc_rbracket */
+    STAY,         /* cc_pipe */
+    STAY,         /* cc_lbrace */
+    STAY }        /* cc_rbrace */
+};
 
 /* Character classification macros for performance - expand inline */
 #define IS_ALPHA(c) (((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z'))
@@ -265,9 +603,57 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     state = s_start;
   }
   
+  /* Optimized DFA-based parsing loop with hybrid approach */
   for (i = 0; i < buflen; i++) {
     ch = buf[i];
     
+    /* Fast path: use DFA table for simple state transitions */
+    if (LIKELY(state == s_schema || state == s_path || state == s_query || state == s_fragment)) {
+      enum state next_state = url_state_table[state][char_class_table[ch]];
+      
+      if (LIKELY(next_state == STAY)) {
+        /* Stay in current state - common case, continue immediately */
+        continue;
+      }
+      
+      if (UNLIKELY(next_state == s_dead)) {
+        return 1;
+      }
+      
+      /* Handle state exit actions */
+      if (state == s_schema && next_state == s_schema_slash) {
+        /* End of schema - write field data */
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = i - field_start;
+        state = next_state;
+        continue;
+      }
+      
+      if (state == s_path && next_state == s_query_or_fragment) {
+        /* Path ended */
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = i - field_start;
+        state = next_state;
+        i--; /* Re-process this character */
+        continue;
+      }
+      
+      if (state == s_query && next_state == s_fragment) {
+        /* Query to fragment transition */
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = i - field_start;
+        field = UF_FRAGMENT;
+        field_start = i + 1;
+        mark_field(u, field);
+        state = next_state;
+        continue;
+      }
+      
+      /* For other transitions from simple states, update state and fall through */
+      state = next_state;
+    }
+    
+    /* Handle complex states and state entry actions */
     switch (state) {
       case s_start:
         if (ch == '/' || ch == '*') {
@@ -283,20 +669,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           field_start = i;
           mark_field(u, field);
         } else {
-          return 1; /* Invalid start character */
-        }
-        break;
-      
-      case s_schema:
-        if (is_alphanum(ch) || ch == '+' || ch == '-' || ch == '.') {
-          /* Continue schema */
-        } else if (LIKELY(ch == ':')) {
-          /* End of schema - write field data */
-          u->field_data[field].off = field_start;
-          u->field_data[field].len = i - field_start;
-          state = s_schema_slash;
-        } else {
-          return 1; /* Invalid character in schema */
+          return 1;
         }
         break;
       
@@ -304,7 +677,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         if (LIKELY(ch == '/')) {
           state = s_schema_slash_slash;
         } else {
-          return 1; /* Expected / after schema: */
+          return 1;
         }
         break;
       
@@ -312,7 +685,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         if (LIKELY(ch == '/')) {
           state = s_server_start;
         } else {
-          return 1; /* Expected // after schema: */
+          return 1;
         }
         break;
       
@@ -330,31 +703,26 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       case s_server:
       case s_server_with_at:
         if (ch == '/') {
-          /* End of host, start of path */
           finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
-          
           field = UF_PATH;
           field_start = i;
           mark_field(u, field);
           state = s_path;
         } else if (ch == '?') {
-          /* End of host, start of query */
           finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
-          
           field = UF_QUERY;
           field_start = i + 1;
           mark_field(u, field);
           state = s_query;
         } else if (ch == '@') {
           if (UNLIKELY(state == s_server_with_at)) {
-            return 1; /* Double @ not allowed */
+            return 1;
           }
-          /* Previous content was userinfo */
           if (field == UF_HOST) {
             u->field_data[UF_USERINFO].off = field_start;
             u->field_data[UF_USERINFO].len = i - field_start;
             mark_field(u, UF_USERINFO);
-            u->field_set &= ~(1 << UF_HOST); /* Clear host flag */
+            u->field_set &= ~(1 << UF_HOST);
           }
           state = s_server_with_at;
           field_start = i + 1;
@@ -367,32 +735,16 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           bracket_depth++;
         } else if (ch == ']') {
           bracket_depth--;
-          /* Detect malformed brackets */
           if (UNLIKELY(bracket_depth < 0)) {
-            return 1; /* Extra closing bracket */
+            return 1;
           }
         } else if (ch == ':') {
-          /* Only treat as port separator if we're not in brackets and haven't found colon yet */
           if (bracket_depth == 0 && !found_colon) {
             found_colon = 1;
             port_start = i + 1;
           }
-        } else if (is_userinfo_char(ch)) {
-          /* Valid server character */
-        } else {
-          return 1; /* Invalid character in server */
-        }
-        break;
-      
-      case s_path:
-        if (LIKELY(is_url_char(ch))) {
-          /* Continue path */
-        } else {
-          /* End of path */
-          u->field_data[field].off = field_start;
-          u->field_data[field].len = i - field_start;
-          state = s_query_or_fragment;
-          i--; /* Re-process this character */
+        } else if (!is_userinfo_char(ch)) {
+          return 1;
         }
         break;
       
@@ -408,37 +760,12 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           mark_field(u, field);
           state = s_fragment;
         } else {
-          return 1; /* Invalid character */
-        }
-        break;
-      
-      case s_query:
-        if (LIKELY(is_url_char(ch) || ch == '?')) {
-          /* Continue query (? is allowed in query string) */
-        } else if (ch == '#') {
-          /* End of query, start of fragment */
-          u->field_data[field].off = field_start;
-          u->field_data[field].len = i - field_start;
-          
-          field = UF_FRAGMENT;
-          field_start = i + 1;
-          mark_field(u, field);
-          state = s_fragment;
-        } else {
-          return 1; /* Invalid character in query */
-        }
-        break;
-      
-      case s_fragment:
-        if (LIKELY(is_url_char(ch) || ch == '?' || ch == '#')) {
-          /* Continue fragment (? and # are allowed) */
-        } else {
-          return 1; /* Invalid character in fragment */
+          return 1;
         }
         break;
       
       default:
-        return 1; /* Invalid state */
+        break;
     }
   }
   
