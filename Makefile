@@ -1,7 +1,7 @@
 # Makefile for llurl - Fast URL Parser
 
 CC = gcc
-CFLAGS = -Wall -Wextra -O3 -std=c99
+CFLAGS = -Wall -Wextra -O3 -std=c99 -funroll-loops
 DEBUG_CFLAGS = -Wall -Wextra -g -std=c99 -fsanitize=address
 
 # Library
@@ -25,7 +25,7 @@ BENCH_CFLAGS = $(CFLAGS) -D_POSIX_C_SOURCE=199309L
 
 .PHONY: all clean test example run-example benchmark run-benchmark
 
-all: $(LIB_STATIC) $(LIB_SHARED)
+all: $(LIB_STATIC) $(LIB_SHARED) benchmark
 
 # Static library
 $(LIB_STATIC): $(LIB_OBJ)

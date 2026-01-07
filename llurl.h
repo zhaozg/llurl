@@ -43,6 +43,7 @@ enum http_parser_url_fields {
 
 /* Result structure for http_parser_parse_url().
  *
+ * 线程安全说明：本解析器无全局状态，结构体独立，适用于多线程环境。
  * Callers should index into field_data[] with UF_* values iff field_set
  * has the relevant (1 << UF_*) bit set. As a courtesy to clients (and
  * because we probably have padding left over), we convert any port to
@@ -58,9 +59,6 @@ struct http_parser_url {
   } field_data[UF_MAX];
 };
 
-/* Initialize all http_parser_url members to 0 */
-void http_parser_url_init(struct http_parser_url *u);
-
 /* Parse a URL; return nonzero on failure
  *
  * This function parses HTTP URLs and extracts their components into
@@ -70,7 +68,7 @@ void http_parser_url_init(struct http_parser_url *u);
  *   buf        - URL string to parse
  *   buflen     - Length of the URL string
  *   is_connect - Non-zero if this is a CONNECT request (expects authority form)
- *   u          - Pointer to http_parser_url structure to fill
+ *   u          - Pointer to http_parser_url structure to fill, call zerolize it
  *
  * Returns:
  *   0 on success, non-zero on failure

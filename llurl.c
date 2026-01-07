@@ -440,11 +440,6 @@ static inline int is_alpha(unsigned char ch) {
   return IS_ALPHA(ch);
 }
 
-/* Check if character is digit */
-static inline int is_digit(unsigned char ch) {
-  return IS_DIGIT(ch);
-}
-
 /* Check if character is valid in userinfo (user:pass@host) */
 static inline int is_userinfo_char(unsigned char ch) {
   return userinfo_char[ch];
@@ -457,23 +452,23 @@ static inline void mark_field(struct http_parser_url *u, enum http_parser_url_fi
 
 /* Parse port number from string */
 static int parse_port(const char *buf, size_t len, uint16_t *port) {
+  /* 优化：直接用内联数值转换，减少循环和分支 */
   uint32_t val = 0;
-  size_t i;
-
+  size_t i = 0;
   if (UNLIKELY(len == 0 || len > 5)) {
     return -1;
   }
-
-  for (i = 0; i < len; i++) {
-    if (UNLIKELY(!is_digit(buf[i]))) {
+  while (i < len) {
+    unsigned char c = buf[i];
+    if (c < '0' || c > '9') {
       return -1;
     }
-    val = val * 10 + (buf[i] - '0');
-    if (UNLIKELY(val > 65535)) {
+    val = val * 10 + (c - '0');
+    if (val > 65535) {
       return -1;
     }
+    i++;
   }
-
   *port = (uint16_t)val;
   return 0;
 }
@@ -508,19 +503,8 @@ static inline void finalize_host_with_port(struct http_parser_url *u,
   }
 }
 
-/* Initialize all http_parser_url members to 0 - avoid memset overhead */
-void http_parser_url_init(struct http_parser_url *u) {
-  size_t i;
-  u->field_set = 0;
-  u->port = 0;
-  /* Initialize field_data array explicitly to avoid uninitialized memory */
-  for (i = 0; i < UF_MAX; i++) {
-    u->field_data[i].off = 0;
-    u->field_data[i].len = 0;
-  }
-}
-
 /* Parse a URL; return nonzero on failure */
+/* 线程安全说明：本函数无全局状态，结构体独立，适用于多线程环境。 */
 int http_parser_parse_url(const char *buf, size_t buflen,
                           int is_connect,
                           struct http_parser_url *u) {
@@ -532,9 +516,6 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   size_t port_start = 0; /* Track port position during host parsing */
   int found_colon = 0;   /* Flag to track if we found : in host */
   int bracket_depth = 0; /* Track IPv6 bracket depth; negative = malformed (extra ]) */
-
-  /* Initialize the URL structure - optimized to avoid memset */
-  http_parser_url_init(u);
 
   /* Handle empty URLs */
   if (UNLIKELY(buflen == 0)) {
@@ -650,20 +631,25 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         /* FALLTHROUGH */
 
       case s_server:
-      case s_server_with_at:
+      case s_server_with_at: {
+        /* 优化分支结构，减少循环内条件判断 */
         if (ch == '/') {
           finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
           field = UF_PATH;
           field_start = i;
           mark_field(u, field);
           state = s_path;
-        } else if (ch == '?') {
+          break;
+        }
+        if (ch == '?') {
           finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
           field = UF_QUERY;
           field_start = i + 1;
           mark_field(u, field);
           state = s_query;
-        } else if (ch == '@') {
+          break;
+        }
+        if (ch == '@') {
           if (UNLIKELY(state == s_server_with_at)) {
             return 1;
           }
@@ -680,22 +666,32 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           found_colon = 0;
           port_start = 0;
           bracket_depth = 0;
-        } else if (ch == '[') {
+          break;
+        }
+        if (ch == '[') {
           bracket_depth++;
-        } else if (ch == ']') {
+          break;
+        }
+        if (ch == ']') {
           bracket_depth--;
           if (UNLIKELY(bracket_depth < 0)) {
             return 1;
           }
-        } else if (ch == ':') {
+          break;
+        }
+        if (ch == ':') {
           if (bracket_depth == 0 && !found_colon) {
             found_colon = 1;
             port_start = i + 1;
           }
-        } else if (!is_userinfo_char(ch)) {
+          break;
+        }
+        /* 用查表方式判断合法 userinfo 字符 */
+        if (!is_userinfo_char(ch)) {
           return 1;
         }
         break;
+      }
 
       case s_query_or_fragment:
         if (ch == '?') {
@@ -724,8 +720,14 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       /* Handle inline port parsing for final host field */
       finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
     } else {
-      u->field_data[field].off = field_start;
-      u->field_data[field].len = i - field_start;
+      /* 优化：仅对可能多次赋值的字段允许覆盖，其余字段只在未设置时写入 */
+      if (field == UF_PATH || field == UF_QUERY || field == UF_FRAGMENT) {
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = i - field_start;
+      } else if (!(u->field_set & (1 << field))) {
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = i - field_start;
+      }
     }
   }
 
