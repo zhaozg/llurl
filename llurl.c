@@ -198,7 +198,8 @@ static inline void finalize_host_with_port(struct http_parser_url *u,
                                            size_t end_pos,
                                            size_t port_start,
                                            int found_colon) {
-  if (found_colon && port_start > 0 && port_start < end_pos) {
+  /* Validate port_start is after field_start and before end_pos */
+  if (found_colon && port_start > field_start && port_start < end_pos) {
     uint16_t port_val;
     size_t port_len = end_pos - port_start;
     if (parse_port(buf + port_start, port_len, &port_val) == 0) {
@@ -243,7 +244,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   unsigned char ch;
   size_t port_start = 0; /* Track port position during host parsing */
   int found_colon = 0;   /* Flag to track if we found : in host */
-  int bracket_depth = 0; /* Track IPv6 bracket depth to avoid rescanning */
+  int bracket_depth = 0; /* Track IPv6 bracket depth; negative = malformed (extra ]) */
   
   /* Initialize the URL structure - optimized to avoid memset */
   http_parser_url_init(u);
