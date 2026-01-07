@@ -81,14 +81,20 @@ static const unsigned char normal_url_char[256] = {
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
+/* Character classification macros for performance - expand inline */
+#define IS_ALPHA(c) (((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z'))
+#define IS_DIGIT(c) ((c) >= '0' && (c) <= '9')
+#define IS_HEX(c) (IS_DIGIT(c) || ((c) >= 'a' && (c) <= 'f') || ((c) >= 'A' && (c) <= 'F'))
+#define IS_ALPHANUM(c) (IS_ALPHA(c) || IS_DIGIT(c))
+
 /* Check if character is alpha */
 static inline int is_alpha(unsigned char ch) {
-  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+  return IS_ALPHA(ch);
 }
 
 /* Check if character is digit */
 static inline int is_digit(unsigned char ch) {
-  return ch >= '0' && ch <= '9';
+  return IS_DIGIT(ch);
 }
 
 /* Check if character is alphanumeric */
