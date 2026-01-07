@@ -81,6 +81,15 @@ static const unsigned char normal_url_char[256] = {
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
+/* Branch prediction hints for performance */
+#if defined(__GNUC__) || defined(__clang__)
+#define LIKELY(x) __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define LIKELY(x) (x)
+#define UNLIKELY(x) (x)
+#endif
+
 /* Character classification macros for performance - expand inline */
 #define IS_ALPHA(c) (((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z'))
 #define IS_DIGIT(c) ((c) >= '0' && (c) <= '9')
@@ -127,16 +136,16 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
   uint32_t val = 0;
   size_t i;
   
-  if (len == 0 || len > 5) {
+  if (UNLIKELY(len == 0 || len > 5)) {
     return -1;
   }
   
   for (i = 0; i < len; i++) {
-    if (!is_digit(buf[i])) {
+    if (UNLIKELY(!is_digit(buf[i]))) {
       return -1;
     }
     val = val * 10 + (buf[i] - '0');
-    if (val > 65535) {
+    if (UNLIKELY(val > 65535)) {
       return -1;
     }
   }
@@ -145,41 +154,11 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
   return 0;
 }
 
-/* Extract port from host field if present */
-static void extract_port_from_host(struct http_parser_url *u, const char *buf) {
-  if (!(u->field_set & (1 << UF_HOST)) || u->field_data[UF_HOST].len == 0) {
-    return;
-  }
-  
-  const char *host_start = buf + u->field_data[UF_HOST].off;
-  size_t host_len = u->field_data[UF_HOST].len;
-  size_t j;
-  
-  /* Look for : separating host and port */
-  for (j = host_len; j > 0; j--) {
-    if (host_start[j-1] == ':') {
-      /* Found port separator */
-      if (j < host_len) {
-        uint16_t port_val;
-        if (parse_port(host_start + j, host_len - j, &port_val) == 0) {
-          u->port = port_val;
-          u->field_data[UF_HOST].len = j - 1;
-          mark_field(u, UF_PORT);
-          u->field_data[UF_PORT].off = u->field_data[UF_HOST].off + j;
-          u->field_data[UF_PORT].len = host_len - j;
-        }
-      }
-      break;
-    } else if (host_start[j-1] == ']') {
-      /* IPv6 address, stop looking for port */
-      break;
-    }
-  }
-}
-
-/* Initialize all http_parser_url members to 0 */
+/* Initialize all http_parser_url members to 0 - avoid memset overhead */
 void http_parser_url_init(struct http_parser_url *u) {
-  memset(u, 0, sizeof(*u));
+  u->field_set = 0;
+  u->port = 0;
+  /* field_data array will be initialized as fields are discovered */
 }
 
 /* Parse a URL; return nonzero on failure */
@@ -191,12 +170,14 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   size_t field_start = 0;
   size_t i;
   unsigned char ch;
+  size_t port_start = 0; /* Track port position during host parsing */
+  int found_colon = 0;   /* Flag to track if we found : in host */
   
-  /* Initialize the URL structure */
+  /* Initialize the URL structure - optimized to avoid memset */
   http_parser_url_init(u);
   
   /* Handle empty URLs */
-  if (buflen == 0) {
+  if (UNLIKELY(buflen == 0)) {
     return 1;
   }
   
@@ -222,7 +203,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           field = UF_PATH;
           field_start = i;
           mark_field(u, field);
-        } else if (is_alpha(ch)) {
+        } else if (LIKELY(is_alpha(ch))) {
           /* Absolute URL with schema */
           state = s_schema;
           field = UF_SCHEMA;
@@ -236,8 +217,8 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       case s_schema:
         if (is_alphanum(ch) || ch == '+' || ch == '-' || ch == '.') {
           /* Continue schema */
-        } else if (ch == ':') {
-          /* End of schema */
+        } else if (LIKELY(ch == ':')) {
+          /* End of schema - write field data */
           u->field_data[field].off = field_start;
           u->field_data[field].len = i - field_start;
           state = s_schema_slash;
@@ -247,7 +228,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         break;
       
       case s_schema_slash:
-        if (ch == '/') {
+        if (LIKELY(ch == '/')) {
           state = s_schema_slash_slash;
         } else {
           return 1; /* Expected / after schema: */
@@ -255,7 +236,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         break;
       
       case s_schema_slash_slash:
-        if (ch == '/') {
+        if (LIKELY(ch == '/')) {
           state = s_server_start;
         } else {
           return 1; /* Expected // after schema: */
@@ -267,6 +248,8 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         field_start = i;
         mark_field(u, field);
         state = s_server;
+        found_colon = 0;
+        port_start = 0;
         /* Fall through to s_server */
         /* FALLTHROUGH */
         
@@ -274,11 +257,27 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       case s_server_with_at:
         if (ch == '/') {
           /* End of host, start of path */
-          u->field_data[field].off = field_start;
-          u->field_data[field].len = i - field_start;
-          
-          /* Check for port in host */
-          extract_port_from_host(u, buf);
+          /* Handle inline port parsing if colon was found */
+          if (found_colon && port_start > 0 && port_start < i) {
+            uint16_t port_val;
+            size_t port_len = i - port_start;
+            if (parse_port(buf + port_start, port_len, &port_val) == 0) {
+              u->port = port_val;
+              u->field_data[UF_HOST].off = field_start;
+              u->field_data[UF_HOST].len = port_start - field_start - 1; /* -1 for : */
+              mark_field(u, UF_PORT);
+              u->field_data[UF_PORT].off = port_start;
+              u->field_data[UF_PORT].len = port_len;
+            } else {
+              /* Invalid port, treat whole thing as host */
+              u->field_data[UF_HOST].off = field_start;
+              u->field_data[UF_HOST].len = i - field_start;
+            }
+          } else {
+            /* No port, just write host */
+            u->field_data[UF_HOST].off = field_start;
+            u->field_data[UF_HOST].len = i - field_start;
+          }
           
           field = UF_PATH;
           field_start = i;
@@ -286,15 +285,32 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           state = s_path;
         } else if (ch == '?') {
           /* End of host, start of query */
-          u->field_data[field].off = field_start;
-          u->field_data[field].len = i - field_start;
+          /* Handle inline port parsing if colon was found */
+          if (found_colon && port_start > 0 && port_start < i) {
+            uint16_t port_val;
+            size_t port_len = i - port_start;
+            if (parse_port(buf + port_start, port_len, &port_val) == 0) {
+              u->port = port_val;
+              u->field_data[UF_HOST].off = field_start;
+              u->field_data[UF_HOST].len = port_start - field_start - 1;
+              mark_field(u, UF_PORT);
+              u->field_data[UF_PORT].off = port_start;
+              u->field_data[UF_PORT].len = port_len;
+            } else {
+              u->field_data[UF_HOST].off = field_start;
+              u->field_data[UF_HOST].len = i - field_start;
+            }
+          } else {
+            u->field_data[UF_HOST].off = field_start;
+            u->field_data[UF_HOST].len = i - field_start;
+          }
           
           field = UF_QUERY;
           field_start = i + 1;
           mark_field(u, field);
           state = s_query;
         } else if (ch == '@') {
-          if (state == s_server_with_at) {
+          if (UNLIKELY(state == s_server_with_at)) {
             return 1; /* Double @ not allowed */
           }
           /* Previous content was userinfo */
@@ -308,6 +324,23 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           field_start = i + 1;
           field = UF_HOST;
           mark_field(u, field);
+          found_colon = 0;
+          port_start = 0;
+        } else if (ch == ':' && !found_colon) {
+          /* Mark potential port position - but only if not in IPv6 brackets */
+          /* Simple heuristic: if we haven't seen '[' or we've already seen ']', treat as port */
+          int in_ipv6 = 0;
+          for (size_t j = field_start; j < i; j++) {
+            if (buf[j] == '[') {
+              in_ipv6 = 1;
+            } else if (buf[j] == ']') {
+              in_ipv6 = 0;
+            }
+          }
+          if (!in_ipv6) {
+            found_colon = 1;
+            port_start = i + 1;
+          }
         } else if (is_userinfo_char(ch) || ch == '[' || ch == ']') {
           /* Valid server character */
         } else {
@@ -316,7 +349,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         break;
       
       case s_path:
-        if (is_url_char(ch)) {
+        if (LIKELY(is_url_char(ch))) {
           /* Continue path */
         } else {
           /* End of path */
@@ -344,7 +377,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         break;
       
       case s_query:
-        if (is_url_char(ch) || ch == '?') {
+        if (LIKELY(is_url_char(ch) || ch == '?')) {
           /* Continue query (? is allowed in query string) */
         } else if (ch == '#') {
           /* End of query, start of fragment */
@@ -361,7 +394,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         break;
       
       case s_fragment:
-        if (is_url_char(ch) || ch == '?' || ch == '#') {
+        if (LIKELY(is_url_char(ch) || ch == '?' || ch == '#')) {
           /* Continue fragment (? and # are allowed) */
         } else {
           return 1; /* Invalid character in fragment */
@@ -375,12 +408,29 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   
   /* Handle final field */
   if (field != UF_MAX) {
-    u->field_data[field].off = field_start;
-    u->field_data[field].len = i - field_start;
-    
-    /* Special handling for host field - extract port if present */
     if (field == UF_HOST) {
-      extract_port_from_host(u, buf);
+      /* Handle inline port parsing for final host field */
+      if (found_colon && port_start > 0 && port_start <= i) {
+        uint16_t port_val;
+        size_t port_len = i - port_start;
+        if (parse_port(buf + port_start, port_len, &port_val) == 0) {
+          u->port = port_val;
+          u->field_data[UF_HOST].off = field_start;
+          u->field_data[UF_HOST].len = port_start - field_start - 1;
+          mark_field(u, UF_PORT);
+          u->field_data[UF_PORT].off = port_start;
+          u->field_data[UF_PORT].len = port_len;
+        } else {
+          u->field_data[UF_HOST].off = field_start;
+          u->field_data[UF_HOST].len = i - field_start;
+        }
+      } else {
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = i - field_start;
+      }
+    } else {
+      u->field_data[field].off = field_start;
+      u->field_data[field].len = i - field_start;
     }
   }
   
