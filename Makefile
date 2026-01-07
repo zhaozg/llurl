@@ -18,7 +18,12 @@ TEST_BIN = test_llurl
 EXAMPLE_SRC = example.c
 EXAMPLE_BIN = example
 
-.PHONY: all clean test example run-example
+# Benchmark
+BENCH_SRC = benchmark.c
+BENCH_BIN = benchmark
+BENCH_CFLAGS = $(CFLAGS) -D_POSIX_C_SOURCE=199309L
+
+.PHONY: all clean test example run-example benchmark run-benchmark
 
 all: $(LIB_STATIC) $(LIB_SHARED)
 
@@ -42,6 +47,10 @@ $(TEST_BIN): $(TEST_SRC) $(LIB_STATIC)
 $(EXAMPLE_BIN): $(EXAMPLE_SRC) $(LIB_STATIC)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_STATIC)
 
+# Benchmark binary
+$(BENCH_BIN): $(BENCH_SRC) $(LIB_STATIC)
+	$(CC) $(BENCH_CFLAGS) -o $@ $< $(LIB_STATIC)
+
 # Run tests
 test: $(TEST_BIN)
 	./$(TEST_BIN)
@@ -53,13 +62,20 @@ example: $(EXAMPLE_BIN)
 run-example: $(EXAMPLE_BIN)
 	./$(EXAMPLE_BIN)
 
+# Build benchmark
+benchmark: $(BENCH_BIN)
+
+# Run benchmark
+run-benchmark: $(BENCH_BIN)
+	./$(BENCH_BIN)
+
 # Debug build
 debug: CFLAGS = $(DEBUG_CFLAGS)
 debug: clean $(TEST_BIN)
 	./$(TEST_BIN)
 
 clean:
-	rm -f $(LIB_OBJ) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN) $(EXAMPLE_BIN)
+	rm -f $(LIB_OBJ) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN) $(EXAMPLE_BIN) $(BENCH_BIN)
 
 # Install (optional)
 install: $(LIB_STATIC) $(LIB_SHARED)
