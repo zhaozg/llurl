@@ -1,0 +1,24 @@
+# Object files
+*.o
+*.a
+*.so
+*.dylib
+
+# Executables
+test_llurl
+benchmark
+
+# Debug files
+*.dSYM/
+*.su
+*.core
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Build artifacts
+/build/
