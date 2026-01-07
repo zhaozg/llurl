@@ -191,11 +191,44 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
   return 0;
 }
 
+/* Helper to finalize host field and extract port if present */
+static inline void finalize_host_with_port(struct http_parser_url *u,
+                                           const char *buf,
+                                           size_t field_start,
+                                           size_t end_pos,
+                                           size_t port_start,
+                                           int found_colon) {
+  if (found_colon && port_start > 0 && port_start < end_pos) {
+    uint16_t port_val;
+    size_t port_len = end_pos - port_start;
+    if (parse_port(buf + port_start, port_len, &port_val) == 0) {
+      u->port = port_val;
+      u->field_data[UF_HOST].off = field_start;
+      u->field_data[UF_HOST].len = port_start - field_start - 1; /* -1 for : */
+      mark_field(u, UF_PORT);
+      u->field_data[UF_PORT].off = port_start;
+      u->field_data[UF_PORT].len = port_len;
+    } else {
+      /* Invalid port, treat whole thing as host */
+      u->field_data[UF_HOST].off = field_start;
+      u->field_data[UF_HOST].len = end_pos - field_start;
+    }
+  } else {
+    /* No port, just write host */
+    u->field_data[UF_HOST].off = field_start;
+    u->field_data[UF_HOST].len = end_pos - field_start;
+  }
+}
+
 /* Initialize all http_parser_url members to 0 - avoid memset overhead */
 void http_parser_url_init(struct http_parser_url *u) {
   u->field_set = 0;
   u->port = 0;
-  /* field_data array will be initialized as fields are discovered */
+  /* Initialize field_data array explicitly to avoid uninitialized memory */
+  for (int i = 0; i < UF_MAX; i++) {
+    u->field_data[i].off = 0;
+    u->field_data[i].len = 0;
+  }
 }
 
 /* Parse a URL; return nonzero on failure */
@@ -294,27 +327,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       case s_server_with_at:
         if (ch == '/') {
           /* End of host, start of path */
-          /* Handle inline port parsing if colon was found */
-          if (found_colon && port_start > 0 && port_start < i) {
-            uint16_t port_val;
-            size_t port_len = i - port_start;
-            if (parse_port(buf + port_start, port_len, &port_val) == 0) {
-              u->port = port_val;
-              u->field_data[UF_HOST].off = field_start;
-              u->field_data[UF_HOST].len = port_start - field_start - 1; /* -1 for : */
-              mark_field(u, UF_PORT);
-              u->field_data[UF_PORT].off = port_start;
-              u->field_data[UF_PORT].len = port_len;
-            } else {
-              /* Invalid port, treat whole thing as host */
-              u->field_data[UF_HOST].off = field_start;
-              u->field_data[UF_HOST].len = i - field_start;
-            }
-          } else {
-            /* No port, just write host */
-            u->field_data[UF_HOST].off = field_start;
-            u->field_data[UF_HOST].len = i - field_start;
-          }
+          finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
           
           field = UF_PATH;
           field_start = i;
@@ -322,25 +335,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           state = s_path;
         } else if (ch == '?') {
           /* End of host, start of query */
-          /* Handle inline port parsing if colon was found */
-          if (found_colon && port_start > 0 && port_start < i) {
-            uint16_t port_val;
-            size_t port_len = i - port_start;
-            if (parse_port(buf + port_start, port_len, &port_val) == 0) {
-              u->port = port_val;
-              u->field_data[UF_HOST].off = field_start;
-              u->field_data[UF_HOST].len = port_start - field_start - 1;
-              mark_field(u, UF_PORT);
-              u->field_data[UF_PORT].off = port_start;
-              u->field_data[UF_PORT].len = port_len;
-            } else {
-              u->field_data[UF_HOST].off = field_start;
-              u->field_data[UF_HOST].len = i - field_start;
-            }
-          } else {
-            u->field_data[UF_HOST].off = field_start;
-            u->field_data[UF_HOST].len = i - field_start;
-          }
+          finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
           
           field = UF_QUERY;
           field_start = i + 1;
@@ -363,18 +358,19 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           mark_field(u, field);
           found_colon = 0;
           port_start = 0;
-        } else if (ch == ':' && !found_colon) {
-          /* Mark potential port position - but only if not in IPv6 brackets */
-          /* Simple heuristic: if we haven't seen '[' or we've already seen ']', treat as port */
-          int in_ipv6 = 0;
+        } else if (ch == ':') {
+          /* Mark potential port position only if not in IPv6 brackets */
+          /* Look back from current position to see if we're inside brackets */
+          int in_brackets = 0;
           for (size_t j = field_start; j < i; j++) {
             if (buf[j] == '[') {
-              in_ipv6 = 1;
+              in_brackets++;
             } else if (buf[j] == ']') {
-              in_ipv6 = 0;
+              in_brackets--;
             }
           }
-          if (!in_ipv6) {
+          /* Only treat as port separator if we're not in brackets and haven't found colon yet */
+          if (in_brackets == 0 && !found_colon) {
             found_colon = 1;
             port_start = i + 1;
           }
@@ -447,24 +443,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   if (field != UF_MAX) {
     if (field == UF_HOST) {
       /* Handle inline port parsing for final host field */
-      if (found_colon && port_start > 0 && port_start <= i) {
-        uint16_t port_val;
-        size_t port_len = i - port_start;
-        if (parse_port(buf + port_start, port_len, &port_val) == 0) {
-          u->port = port_val;
-          u->field_data[UF_HOST].off = field_start;
-          u->field_data[UF_HOST].len = port_start - field_start - 1;
-          mark_field(u, UF_PORT);
-          u->field_data[UF_PORT].off = port_start;
-          u->field_data[UF_PORT].len = port_len;
-        } else {
-          u->field_data[UF_HOST].off = field_start;
-          u->field_data[UF_HOST].len = i - field_start;
-        }
-      } else {
-        u->field_data[field].off = field_start;
-        u->field_data[field].len = i - field_start;
-      }
+      finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
     } else {
       u->field_data[field].off = field_start;
       u->field_data[field].len = i - field_start;
