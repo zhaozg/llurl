@@ -75,47 +75,6 @@ enum char_class {
 
 /* Character classification lookup tables for performance */
 
-/* Lookup table for valid URL characters */
-static const unsigned char normal_url_char[256] = {
-/*   0 nul    1 soh    2 stx    3 etx    4 eot    5 enq    6 ack    7 bel  */
-        0,       0,       0,       0,       0,       0,       0,       0,
-/*   8 bs     9 ht    10 nl    11 vt    12 np    13 cr    14 so    15 si   */
-        0,       0,       0,       0,       0,       0,       0,       0,
-/*  16 dle   17 dc1   18 dc2   19 dc3   20 dc4   21 nak   22 syn   23 etb */
-        0,       0,       0,       0,       0,       0,       0,       0,
-/*  24 can   25 em    26 sub   27 esc   28 fs    29 gs    30 rs    31 us  */
-        0,       0,       0,       0,       0,       0,       0,       0,
-/*  32 sp    33  !    34  "    35  #    36  $    37  %    38  &    39  '  */
-        0,       1,       1,       0,       1,       1,       1,       1,
-/*  40  (    41  )    42  *    43  +    44  ,    45  -    46  .    47  /  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/*  48  0    49  1    50  2    51  3    52  4    53  5    54  6    55  7  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/*  56  8    57  9    58  :    59  ;    60  <    61  =    62  >    63  ?  */
-        1,       1,       1,       1,       1,       1,       1,       0,
-/*  64  @    65  A    66  B    67  C    68  D    69  E    70  F    71  G  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/*  72  H    73  I    74  J    75  K    76  L    77  M    78  N    79  O  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/*  80  P    81  Q    82  R    83  S    84  T    85  U    86  V    87  W  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/*  88  X    89  Y    90  Z    91  [    92  \    93  ]    94  ^    95  _  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/*  96  `    97  a    98  b    99  c   100  d   101  e   102  f   103  g  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/* 104  h   105  i   106  j   107  k   108  l   109  m   110  n   111  o  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/* 112  p   113  q   114  r   115  s   116  t   117  u   118  v   119  w  */
-        1,       1,       1,       1,       1,       1,       1,       1,
-/* 120  x   121  y   122  z   123  {   124  |   125  }   126  ~   127 del */
-        1,       1,       1,       1,       1,       1,       1,       0,
-/* 128-255: Extended ASCII - all invalid */
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-};
-
 /* Lookup table for userinfo characters (user:pass@host) */
 /* Includes ALPHANUM + MARK + %:;&=+$, */
 static const unsigned char userinfo_char[256] = {
@@ -231,7 +190,7 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
   { s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
-  
+
   /* s_start - initial state */
   { s_dead,       /* cc_invalid */
     s_schema,     /* cc_alpha - start of schema */
@@ -262,7 +221,7 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
     s_dead,       /* cc_pipe */
     s_dead,       /* cc_lbrace */
     s_dead },     /* cc_rbrace */
-  
+
   /* s_schema - parsing schema (http, https, etc.) */
   { s_dead,       /* cc_invalid */
     STAY,         /* cc_alpha */
@@ -293,22 +252,22 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
     s_dead,       /* cc_pipe */
     s_dead,       /* cc_lbrace */
     s_dead },     /* cc_rbrace */
-  
+
   /* s_schema_slash - expect first / after schema: */
   { s_dead, s_dead, s_dead, s_schema_slash_slash, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
-  
+
   /* s_schema_slash_slash - expect second / after schema:/ */
   { s_dead, s_dead, s_dead, s_server_start, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
-  
+
   /* s_server_start - start of server/host, handled specially in code */
   { s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
-  
+
   /* s_server - parsing server/host */
   { s_dead,       /* cc_invalid */
     STAY,         /* cc_alpha */
@@ -339,7 +298,7 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
     STAY,         /* cc_pipe */
     STAY,         /* cc_lbrace */
     STAY },       /* cc_rbrace */
-  
+
   /* s_server_with_at - parsing server after @ (cannot have another @) */
   { s_dead,       /* cc_invalid */
     STAY,         /* cc_alpha */
@@ -370,7 +329,7 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
     STAY,         /* cc_pipe */
     STAY,         /* cc_lbrace */
     STAY },       /* cc_rbrace */
-  
+
   /* s_path - parsing path */
   { s_dead,       /* cc_invalid */
     STAY,         /* cc_alpha */
@@ -401,12 +360,12 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
     STAY,         /* cc_pipe */
     STAY,         /* cc_lbrace */
     STAY },       /* cc_rbrace */
-  
+
   /* s_query_or_fragment - determining whether ? or # comes next */
   { s_dead, s_dead, s_dead, s_dead, s_dead, s_query, s_fragment, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead,
     s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead, s_dead },
-  
+
   /* s_query - parsing query string */
   { s_dead,       /* cc_invalid */
     STAY,         /* cc_alpha */
@@ -437,7 +396,7 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
     STAY,         /* cc_pipe */
     STAY,         /* cc_lbrace */
     STAY },       /* cc_rbrace */
-  
+
   /* s_fragment - parsing fragment */
   { s_dead,       /* cc_invalid */
     STAY,         /* cc_alpha */
@@ -486,19 +445,9 @@ static inline int is_digit(unsigned char ch) {
   return IS_DIGIT(ch);
 }
 
-/* Check if character is alphanumeric */
-static inline int is_alphanum(unsigned char ch) {
-  return is_alpha(ch) || is_digit(ch);
-}
-
 /* Check if character is valid in userinfo (user:pass@host) */
 static inline int is_userinfo_char(unsigned char ch) {
   return userinfo_char[ch];
-}
-
-/* Check if character is valid in URL path/query/fragment */
-static inline int is_url_char(unsigned char ch) {
-  return normal_url_char[ch];
 }
 
 /* Mark field as present in the URL */
@@ -510,11 +459,11 @@ static inline void mark_field(struct http_parser_url *u, enum http_parser_url_fi
 static int parse_port(const char *buf, size_t len, uint16_t *port) {
   uint32_t val = 0;
   size_t i;
-  
+
   if (UNLIKELY(len == 0 || len > 5)) {
     return -1;
   }
-  
+
   for (i = 0; i < len; i++) {
     if (UNLIKELY(!is_digit(buf[i]))) {
       return -1;
@@ -524,7 +473,7 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
       return -1;
     }
   }
-  
+
   *port = (uint16_t)val;
   return 0;
 }
@@ -583,15 +532,15 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   size_t port_start = 0; /* Track port position during host parsing */
   int found_colon = 0;   /* Flag to track if we found : in host */
   int bracket_depth = 0; /* Track IPv6 bracket depth; negative = malformed (extra ]) */
-  
+
   /* Initialize the URL structure - optimized to avoid memset */
   http_parser_url_init(u);
-  
+
   /* Handle empty URLs */
   if (UNLIKELY(buflen == 0)) {
     return 1;
   }
-  
+
   /* Set initial state based on request type */
   if (is_connect) {
     /* CONNECT requests expect authority form (host:port) */
@@ -602,24 +551,24 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   } else {
     state = s_start;
   }
-  
+
   /* Optimized DFA-based parsing loop with hybrid approach */
   for (i = 0; i < buflen; i++) {
     ch = buf[i];
-    
+
     /* Fast path: use DFA table for simple state transitions */
     if (LIKELY(state == s_schema || state == s_path || state == s_query || state == s_fragment)) {
       enum state next_state = url_state_table[state][char_class_table[ch]];
-      
+
       if (LIKELY(next_state == STAY)) {
         /* Stay in current state - common case, continue immediately */
         continue;
       }
-      
+
       if (UNLIKELY(next_state == s_dead)) {
         return 1;
       }
-      
+
       /* Handle state exit actions */
       if (state == s_schema && next_state == s_schema_slash) {
         /* End of schema - write field data */
@@ -628,7 +577,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         state = next_state;
         continue;
       }
-      
+
       if (state == s_path && next_state == s_query_or_fragment) {
         /* Path ended */
         u->field_data[field].off = field_start;
@@ -637,7 +586,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         i--; /* Re-process this character */
         continue;
       }
-      
+
       if (state == s_query && next_state == s_fragment) {
         /* Query to fragment transition */
         u->field_data[field].off = field_start;
@@ -648,11 +597,11 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         state = next_state;
         continue;
       }
-      
+
       /* For other transitions from simple states, update state and fall through */
       state = next_state;
     }
-    
+
     /* Handle complex states and state entry actions */
     switch (state) {
       case s_start:
@@ -672,7 +621,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           return 1;
         }
         break;
-      
+
       case s_schema_slash:
         if (LIKELY(ch == '/')) {
           state = s_schema_slash_slash;
@@ -680,7 +629,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           return 1;
         }
         break;
-      
+
       case s_schema_slash_slash:
         if (LIKELY(ch == '/')) {
           state = s_server_start;
@@ -688,7 +637,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           return 1;
         }
         break;
-      
+
       case s_server_start:
         field = UF_HOST;
         field_start = i;
@@ -699,7 +648,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         bracket_depth = 0;
         /* Fall through to s_server */
         /* FALLTHROUGH */
-        
+
       case s_server:
       case s_server_with_at:
         if (ch == '/') {
@@ -747,7 +696,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           return 1;
         }
         break;
-      
+
       case s_query_or_fragment:
         if (ch == '?') {
           field = UF_QUERY;
@@ -763,12 +712,12 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           return 1;
         }
         break;
-      
+
       default:
         break;
     }
   }
-  
+
   /* Handle final field */
   if (field != UF_MAX) {
     if (field == UF_HOST) {
@@ -779,6 +728,6 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       u->field_data[field].len = i - field_start;
     }
   }
-  
+
   return 0; /* Success */
 }
