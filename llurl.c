@@ -21,6 +21,7 @@
 
 #include "llurl.h"
 #include <string.h>
+#include <stdlib.h>
 
 /* State machine states for URL parsing */
 enum state {
@@ -474,37 +475,78 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
 }
 
 /* Helper to finalize host field and extract port if present */
-static inline void finalize_host_with_port(struct http_parser_url *u,
+static inline int finalize_host_with_port(struct http_parser_url *u,
                                            const char *buf,
                                            size_t field_start,
                                            size_t end_pos,
                                            size_t port_start,
                                            int found_colon) {
-  /* Validate port_start is after field_start and before end_pos */
+  size_t host_off = field_start;
+  size_t host_len = (found_colon && port_start > field_start && port_start < end_pos)
+                      ? port_start - field_start - 1
+                      : end_pos - field_start;
+
+  // 检查是否为 IPv6 地址（以 [ 开头，] 在 host 内部且在 port 前）
+  if (host_len >= 2 && buf[host_off] == '[') {
+    // 查找最后一个 ']'，而不是假定 host_off + host_len - 1
+    size_t end = host_off + host_len - 1;
+    size_t last_bracket = 0;
+    int found_bracket = 0;
+    for (size_t k = host_off; k <= end; ++k) {
+      if (buf[k] == ']') { last_bracket = k; found_bracket = 1; }
+    }
+    if (!found_bracket) {
+      // IPv6 host 缺少闭合 ]
+      return 0;
+    }
+    if (last_bracket > host_off) {
+      size_t after_bracket = last_bracket + 1;
+      // 检查 ] 后是否有 :port
+      if (after_bracket < end && buf[after_bracket] == ':') {
+        uint16_t port_val;
+        size_t port_len = end - after_bracket;
+        if (parse_port(buf + after_bracket + 1, port_len, &port_val) == 0) {
+          u->port = port_val;
+          u->field_data[UF_PORT].off = after_bracket + 1;
+          u->field_data[UF_PORT].len = port_len;
+          mark_field(u, UF_PORT);
+        } else {
+          // 端口非法
+          return 0;
+        }
+        host_len = last_bracket - host_off - 1;
+      } else {
+        host_len = last_bracket - host_off - 1;
+      }
+      host_off += 1;
+    }
+  }
+
   if (found_colon && port_start > field_start && port_start < end_pos) {
     uint16_t port_val;
     size_t port_len = end_pos - port_start;
     if (parse_port(buf + port_start, port_len, &port_val) == 0) {
       u->port = port_val;
-      u->field_data[UF_HOST].off = field_start;
-      u->field_data[UF_HOST].len = port_start - field_start - 1; /* -1 for : */
+      u->field_data[UF_HOST].off = host_off;
+      u->field_data[UF_HOST].len = host_len;
       mark_field(u, UF_PORT);
       u->field_data[UF_PORT].off = port_start;
       u->field_data[UF_PORT].len = port_len;
     } else {
-      /* Invalid port, treat whole thing as host */
-      u->field_data[UF_HOST].off = field_start;
-      u->field_data[UF_HOST].len = end_pos - field_start;
+      // Invalid port, return error
+      return 0;
     }
   } else {
-    /* No port, just write host */
-    u->field_data[UF_HOST].off = field_start;
-    u->field_data[UF_HOST].len = end_pos - field_start;
+    // No port, just write host
+    u->field_data[UF_HOST].off = host_off;
+    u->field_data[UF_HOST].len = host_len;
   }
+  return 1;
 }
 
 /* Parse a URL; return nonzero on failure */
 /* 线程安全说明：本函数无全局状态，结构体独立，适用于多线程环境。 */
+#include <stdio.h>
 int http_parser_parse_url(const char *buf, size_t buflen,
                           int is_connect,
                           struct http_parser_url *u) {
@@ -516,6 +558,38 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   size_t port_start = 0; /* Track port position during host parsing */
   int found_colon = 0;   /* Flag to track if we found : in host */
   int bracket_depth = 0; /* Track IPv6 bracket depth; negative = malformed (extra ]) */
+
+  /* --- ENHANCEMENT: Support //host/path as host+path (no schema, not CONNECT mode) --- */
+  if (!is_connect && buflen >= 2 && buf[0] == '/' && buf[1] == '/') {
+    // 构造一个临时带 schema 的字符串
+    const char *fake_schema = "http://";
+    size_t fake_len = strlen(fake_schema) + buflen - 2;
+    char *tmp = (char *)malloc(fake_len + 1);
+    if (!tmp) return 1;
+    strcpy(tmp, fake_schema);
+    memcpy(tmp + strlen(fake_schema), buf + 2, buflen - 2); // 跳过原始的 //
+    tmp[fake_len] = '\0';
+    struct http_parser_url u2;
+    int ret = http_parser_parse_url(tmp, fake_len, is_connect, &u2);
+    if (ret == 0) {
+      size_t delta = strlen(fake_schema);
+      for (int f = 0; f < UF_MAX; ++f) {
+        if (u2.field_set & (1 << f)) {
+          u->field_set |= (1 << f);
+          if (f == UF_SCHEMA) {
+            // 对于无 schema 的输入，不设置 protocol 字段
+            continue;
+          } else {
+            u->field_data[f].off = u2.field_data[f].off >= delta ? u2.field_data[f].off - delta + 2 : 0;
+            u->field_data[f].len = u2.field_data[f].len;
+          }
+        }
+      }
+      u->port = u2.port;
+    }
+    free(tmp);
+    return ret;
+  }
 
   /* Handle empty URLs */
   if (UNLIKELY(buflen == 0)) {
@@ -627,6 +701,10 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         found_colon = 0;
         port_start = 0;
         bracket_depth = 0;
+        // 新增：如果下一个字符不是 host 的合法起始字符，直接返回错误
+        if (i >= buflen || buf[i] == '/' || buf[i] == '?' || buf[i] == '#') {
+          return 1;
+        }
         /* Fall through to s_server */
         /* FALLTHROUGH */
 
@@ -634,7 +712,9 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       case s_server_with_at: {
         /* 优化分支结构，减少循环内条件判断 */
         if (ch == '/') {
-          finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
+          if (!finalize_host_with_port(u, buf, field_start, i, port_start, found_colon)) {
+            return 1;
+          }
           field = UF_PATH;
           field_start = i;
           mark_field(u, field);
@@ -642,7 +722,9 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           break;
         }
         if (ch == '?') {
-          finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
+          if (!finalize_host_with_port(u, buf, field_start, i, port_start, found_colon)) {
+            return 1;
+          }
           field = UF_QUERY;
           field_start = i + 1;
           mark_field(u, field);
@@ -686,6 +768,17 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           }
           break;
         }
+        /* 允许 IPv6 host 的 zone id（%zone）部分 */
+        if (bracket_depth > 0 && buf[field_start] == '[' && ch == '%') {
+          /* 跳过 zone id，直到遇到 ']' 或字符串结束 */
+          i++;
+          while (i < buflen && buf[i] != ']') i++;
+          if (i >= buflen) {
+            return 1;
+          }
+          ch = buf[i]; /* 让主循环继续处理 ']' */
+          continue;
+        }
         /* 用查表方式判断合法 userinfo 字符 */
         if (!is_userinfo_char(ch)) {
           return 1;
@@ -718,7 +811,9 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   if (field != UF_MAX) {
     if (field == UF_HOST) {
       /* Handle inline port parsing for final host field */
-      finalize_host_with_port(u, buf, field_start, i, port_start, found_colon);
+      if (!finalize_host_with_port(u, buf, field_start, i, port_start, found_colon)) {
+        return 1;
+      }
     } else {
       /* 优化：仅对可能多次赋值的字段允许覆盖，其余字段只在未设置时写入 */
       if (field == UF_PATH || field == UF_QUERY || field == UF_FRAGMENT) {
@@ -727,6 +822,49 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       } else if (!(u->field_set & (1 << field))) {
         u->field_data[field].off = field_start;
         u->field_data[field].len = i - field_start;
+      }
+    }
+  }
+
+  /* CONNECT 模式下，必须严格是 host[:port]，不能有 path/query/fragment */
+  if (is_connect) {
+    if (state != s_server && state != s_server_with_at) {
+      return 1;
+    }
+    // 检查 host 字段后是否还有多余字符（如 path/query/fragment）
+    if (i < buflen) {
+      return 1;
+    }
+    // 必须包含端口
+    if (!(u->field_set & (1 << UF_PORT))) {
+      return 1;
+    }
+  }
+
+  /* --- ENHANCEMENT: Reject schema with no host (e.g. http://) --- */
+  if (!is_connect && (u->field_set & (1 << UF_SCHEMA)) && !(u->field_set & (1 << UF_HOST))) {
+    return 1;
+  }
+
+  /* --- ENHANCEMENT: Reject invalid percent-encoding in host, but allow IPv6 zone id --- */
+  if (u->field_set & (1 << UF_HOST)) {
+    size_t off = u->field_data[UF_HOST].off;
+    size_t len = u->field_data[UF_HOST].len;
+    size_t j = 0;
+    if (strchr(buf + off, '%') != NULL && strchr(buf + off, ':') != NULL) {
+      // 直接跳过百分号校验
+    } else {
+      while (j < len) {
+        if (buf[off + j] == '%') {
+          if (j + 2 >= len) {
+            return 1;
+          }
+          if (!IS_HEX(buf[off + j + 1]) || !IS_HEX(buf[off + j + 2])) {
+            return 1;
+          }
+          j += 2;
+        }
+        j++;
       }
     }
   }
