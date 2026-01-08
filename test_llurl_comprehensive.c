@@ -578,18 +578,23 @@ void test_invalid_bad_schema() {
  * Edge Case Tests
  * ============================================ */
 
+#define MAX_TEST_URL_LEN 2048
+#define LONG_PATH_CHARS 1000
+
 void test_edge_very_long_url() {
   TEST_START("Edge case: very long URL");
-  char url[2048];
-  strcpy(url, "http://example.com/");
-  for (int i = 0; i < 1000; i++) {
-    strcat(url, "a");
-  }
+  char url[MAX_TEST_URL_LEN];
+  const char *prefix = "http://example.com/";
+  size_t prefix_len = strlen(prefix);
+  
+  strcpy(url, prefix);
+  memset(url + prefix_len, 'a', LONG_PATH_CHARS);
+  url[prefix_len + LONG_PATH_CHARS] = '\0';
   
   struct http_parser_url u = { 0 };
   int result = http_parser_parse_url(url, strlen(url), 0, &u);
   assert(result == 0);
-  assert(u.field_data[UF_PATH].len == 1001); // 1000 'a's + '/'
+  assert(u.field_data[UF_PATH].len == LONG_PATH_CHARS + 1); // LONG_PATH_CHARS 'a's + '/'
 
   TEST_PASS();
 }
