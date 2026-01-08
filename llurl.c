@@ -210,9 +210,11 @@ static const unsigned char char_class_table[256] = {
 
 /* Character classification macros - now using unified bitmask lookup table */
 #define IS_ALPHA(c) (char_flags[(unsigned char)(c)] & CHAR_ALPHA)
-#define IS_DIGIT(c) ((c) >= '0' && (c) <= '9')
+#define IS_DIGIT(c) (char_flags[(unsigned char)(c)] & CHAR_DIGIT)
 #define IS_HEX(c) (char_flags[(unsigned char)(c)] & CHAR_HEX)
 #define IS_ALPHANUM(c) (char_flags[(unsigned char)(c)] & (CHAR_ALPHA | CHAR_DIGIT))
+#define IS_UNRESERVED(c) (char_flags[(unsigned char)(c)] & CHAR_UNRESERVED)
+#define IS_SUBDELIM(c) (char_flags[(unsigned char)(c)] & CHAR_SUBDELIM)
 
 /* ============================================================================
  * DFA STATE TRANSITION TABLE
@@ -494,7 +496,7 @@ void http_parser_url_init(struct http_parser_url *u) {
 
 /* Parse port number from string */
 static int parse_port(const char *buf, size_t len, uint16_t *port) {
-  /* 优化：直接用内联数值转换，减少循环和分支 */
+  /* Optimized with bitmask lookup for digit validation */
   uint32_t val = 0;
   size_t i = 0;
   if (UNLIKELY(len == 0 || len > 5)) {
@@ -502,11 +504,12 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
   }
   while (i < len) {
     unsigned char c = buf[i];
-    if (c < '0' || c > '9') {
+    /* Use bitmask table for branchless digit check */
+    if (UNLIKELY(!(char_flags[c] & CHAR_DIGIT))) {
       return -1;
     }
     val = val * 10 + (c - '0');
-    if (val > 65535) {
+    if (UNLIKELY(val > 65535)) {
       return -1;
     }
     i++;
