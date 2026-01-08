@@ -566,7 +566,7 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
     unsigned char c1 = buf[1];
     unsigned char c2 = buf[2];
     unsigned char c3 = buf[3];
-    /* Check all digits at once using bitwise OR for better performance */
+    /* Check all digits at once using bitwise AND for better performance */
     unsigned char flags = char_flags[c0] & char_flags[c1] & char_flags[c2] & char_flags[c3];
     if (LIKELY(flags & CHAR_DIGIT)) {
       uint32_t val = (c0 - '0') * 1000 + (c1 - '0') * 100 + (c2 - '0') * 10 + (c3 - '0');
@@ -653,10 +653,10 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
       u->port = port_val;
       u->field_data[UF_HOST].off = host_off;
       u->field_data[UF_HOST].len = host_len;
-      mark_field(u, UF_HOST);
-      mark_field(u, UF_PORT);
       u->field_data[UF_PORT].off = port_start;
       u->field_data[UF_PORT].len = port_len;
+      mark_field(u, UF_HOST);
+      mark_field(u, UF_PORT);
     } else {
       // Invalid port, return error
       return 0;
