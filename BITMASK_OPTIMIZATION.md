@@ -261,18 +261,7 @@ test   al, CHAR_ALPHA                ; 1 instruction
 
 ## Opportunities for Further Optimization
 
-### 1. SIMD Vectorization (Potential 2-4x)
-Use AVX2/AVX-512 to process 16-32 characters in parallel:
-```c
-// Process 16 characters at once
-__m128i chars = _mm_loadu_si128((__m128i*)buf);
-__m128i flags = _mm_shuffle_epi8(char_flags_vec, chars);
-// Check multiple characters in parallel
-```
-
-**Trade-off**: Platform-specific, increased complexity
-
-### 2. Compile-Time Character Class Generation
+### 1. Compile-Time Character Class Generation
 Generate lookup tables at compile-time for zero runtime overhead:
 ```c
 constexpr auto generate_char_flags() {
@@ -283,15 +272,6 @@ constexpr auto generate_char_flags() {
 ```
 
 **Trade-off**: C++17 required, or complex C macros
-
-### 3. Fused Operations
-Combine common operations in hot paths:
-```c
-// Check if char is valid in userinfo AND is alphanum
-#define IS_USERINFO_ALPHANUM(c) \
-  ((char_flags[(unsigned char)(c)] & (CHAR_USERINFO | CHAR_ALPHA | CHAR_DIGIT)) == \
-   (CHAR_USERINFO | CHAR_ALPHA | CHAR_DIGIT))
-```
 
 ---
 
