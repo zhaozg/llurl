@@ -59,6 +59,16 @@ struct http_parser_url {
   } field_data[UF_MAX];
 };
 
+/* Initialize a URL structure to zeros before parsing
+ *
+ * This function must be called before passing the http_parser_url
+ * structure to http_parser_parse_url().
+ *
+ * Arguments:
+ *   u - Pointer to http_parser_url structure to initialize
+ */
+void http_parser_url_init(struct http_parser_url *u);
+
 /* Parse a URL; return nonzero on failure
  *
  * This function parses HTTP URLs and extracts their components into
@@ -68,7 +78,7 @@ struct http_parser_url {
  *   buf        - URL string to parse
  *   buflen     - Length of the URL string
  *   is_connect - Non-zero if this is a CONNECT request (expects authority form)
- *   u          - Pointer to http_parser_url structure to fill, call zerolize it
+ *   u          - Pointer to http_parser_url structure to fill, must be initialized
  *
  * Returns:
  *   0 on success, non-zero on failure

@@ -23,6 +23,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* ============================================================================
+ * CONSTANTS AND TYPE DEFINITIONS
+ * ============================================================================ */
+
 /* State machine states for URL parsing */
 enum state {
   s_dead = 0,
@@ -74,7 +78,9 @@ enum char_class {
   cc_num_char_classes
 };
 
-/* Character classification lookup tables for performance */
+/* ============================================================================
+ * CHARACTER CLASSIFICATION LOOKUP TABLES
+ * ============================================================================ */
 
 /* Lookup table for userinfo characters (user:pass@host) */
 /* Includes ALPHANUM + MARK + %:;&=+$, */
@@ -171,6 +177,10 @@ static const unsigned char char_class_table[256] = {
   cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid
 };
 
+/* ============================================================================
+ * BRANCH PREDICTION HINTS AND OPTIMIZATION MACROS
+ * ============================================================================ */
+
 /* Branch prediction hints for performance */
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
@@ -179,6 +189,16 @@ static const unsigned char char_class_table[256] = {
 #define LIKELY(x) (x)
 #define UNLIKELY(x) (x)
 #endif
+
+/* Character classification macros for performance - expand inline */
+#define IS_ALPHA(c) (((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z'))
+#define IS_DIGIT(c) ((c) >= '0' && (c) <= '9')
+#define IS_HEX(c) (IS_DIGIT(c) || ((c) >= 'a' && (c) <= 'f') || ((c) >= 'A' && (c) <= 'F'))
+#define IS_ALPHANUM(c) (IS_ALPHA(c) || IS_DIGIT(c))
+
+/* ============================================================================
+ * DFA STATE TRANSITION TABLE
+ * ============================================================================ */
 
 /* DFA state transition table: url_state_table[current_state][char_class] = next_state
  * This table drives the state machine, eliminating most switch-case overhead
@@ -430,11 +450,9 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
     STAY }        /* cc_rbrace */
 };
 
-/* Character classification macros for performance - expand inline */
-#define IS_ALPHA(c) (((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z'))
-#define IS_DIGIT(c) ((c) >= '0' && (c) <= '9')
-#define IS_HEX(c) (IS_DIGIT(c) || ((c) >= 'a' && (c) <= 'f') || ((c) >= 'A' && (c) <= 'F'))
-#define IS_ALPHANUM(c) (IS_ALPHA(c) || IS_DIGIT(c))
+/* ============================================================================
+ * HELPER FUNCTIONS
+ * ============================================================================ */
 
 /* Check if character is alpha */
 static inline int is_alpha(unsigned char ch) {
@@ -449,6 +467,11 @@ static inline int is_userinfo_char(unsigned char ch) {
 /* Mark field as present in the URL */
 static inline void mark_field(struct http_parser_url *u, enum http_parser_url_fields field) {
   u->field_set |= (1 << field);
+}
+
+/* Initialize URL structure - public API function */
+void http_parser_url_init(struct http_parser_url *u) {
+  memset(u, 0, sizeof(*u));
 }
 
 /* Parse port number from string */
@@ -544,6 +567,71 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
   return 1;
 }
 
+/* Handle protocol-relative URLs (//host/path) by adding a fake schema */
+static int parse_protocol_relative_url(const char *buf, size_t buflen,
+                                       int is_connect,
+                                       struct http_parser_url *u) {
+  const char *fake_schema = "http://";
+  size_t fake_len = strlen(fake_schema) + buflen - 2;
+  char *tmp = (char *)malloc(fake_len + 1);
+  if (!tmp) return 1;
+  
+  strcpy(tmp, fake_schema);
+  memcpy(tmp + strlen(fake_schema), buf + 2, buflen - 2); // 跳过原始的 //
+  tmp[fake_len] = '\0';
+  
+  struct http_parser_url u2;
+  memset(&u2, 0, sizeof(u2));
+  int ret = http_parser_parse_url(tmp, fake_len, is_connect, &u2);
+  
+  if (ret == 0) {
+    size_t delta = strlen(fake_schema);
+    for (int f = 0; f < UF_MAX; ++f) {
+      if (u2.field_set & (1 << f)) {
+        u->field_set |= (1 << f);
+        if (f == UF_SCHEMA) {
+          // 对于无 schema 的输入，不设置 protocol 字段
+          continue;
+        } else {
+          u->field_data[f].off = u2.field_data[f].off >= delta ? u2.field_data[f].off - delta + 2 : 0;
+          u->field_data[f].len = u2.field_data[f].len;
+        }
+      }
+    }
+    u->port = u2.port;
+  }
+  free(tmp);
+  return ret;
+}
+
+/* Validate percent-encoding in host field, allowing IPv6 zone IDs */
+static int validate_host_percent_encoding(const char *buf, size_t off, size_t len) {
+  /* Skip validation if this appears to be an IPv6 address with zone ID */
+  if (strchr(buf + off, '%') != NULL && strchr(buf + off, ':') != NULL) {
+    return 1; /* Valid - IPv6 with zone ID */
+  }
+  
+  /* Validate percent encoding */
+  size_t j = 0;
+  while (j < len) {
+    if (buf[off + j] == '%') {
+      if (j + 2 >= len) {
+        return 0; /* Invalid - incomplete percent encoding */
+      }
+      if (!IS_HEX(buf[off + j + 1]) || !IS_HEX(buf[off + j + 2])) {
+        return 0; /* Invalid - non-hex characters after % */
+      }
+      j += 2;
+    }
+    j++;
+  }
+  return 1; /* Valid */
+}
+
+/* ============================================================================
+ * MAIN URL PARSING FUNCTION
+ * ============================================================================ */
+
 /* Parse a URL; return nonzero on failure */
 /* 线程安全说明：本函数无全局状态，结构体独立，适用于多线程环境。 */
 #include <stdio.h>
@@ -559,37 +647,9 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   int found_colon = 0;   /* Flag to track if we found : in host */
   int bracket_depth = 0; /* Track IPv6 bracket depth; negative = malformed (extra ]) */
 
-  /* --- ENHANCEMENT: Support //host/path as host+path (no schema, not CONNECT mode) --- */
+  /* Handle protocol-relative URLs (//host/path) */
   if (!is_connect && buflen >= 2 && buf[0] == '/' && buf[1] == '/') {
-    // 构造一个临时带 schema 的字符串
-    const char *fake_schema = "http://";
-    size_t fake_len = strlen(fake_schema) + buflen - 2;
-    char *tmp = (char *)malloc(fake_len + 1);
-    if (!tmp) return 1;
-    strcpy(tmp, fake_schema);
-    memcpy(tmp + strlen(fake_schema), buf + 2, buflen - 2); // 跳过原始的 //
-    tmp[fake_len] = '\0';
-    struct http_parser_url u2;
-    memset(&u2, 0, sizeof(u2));
-    int ret = http_parser_parse_url(tmp, fake_len, is_connect, &u2);
-    if (ret == 0) {
-      size_t delta = strlen(fake_schema);
-      for (int f = 0; f < UF_MAX; ++f) {
-        if (u2.field_set & (1 << f)) {
-          u->field_set |= (1 << f);
-          if (f == UF_SCHEMA) {
-            // 对于无 schema 的输入，不设置 protocol 字段
-            continue;
-          } else {
-            u->field_data[f].off = u2.field_data[f].off >= delta ? u2.field_data[f].off - delta + 2 : 0;
-            u->field_data[f].len = u2.field_data[f].len;
-          }
-        }
-      }
-      u->port = u2.port;
-    }
-    free(tmp);
-    return ret;
+    return parse_protocol_relative_url(buf, buflen, is_connect, u);
   }
 
   /* Handle empty URLs */
@@ -873,7 +933,6 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         if (ch == '[') {
           /* IPv6 fast path - batch process the entire IPv6 address */
           bracket_depth = 1;
-          size_t ipv6_start = i;
           i++;
           
           /* Scan to closing bracket using memchr for speed */
@@ -989,24 +1048,8 @@ int http_parser_parse_url(const char *buf, size_t buflen,
 
   /* --- ENHANCEMENT: Reject invalid percent-encoding in host, but allow IPv6 zone id --- */
   if (u->field_set & (1 << UF_HOST)) {
-    size_t off = u->field_data[UF_HOST].off;
-    size_t len = u->field_data[UF_HOST].len;
-    size_t j = 0;
-    if (strchr(buf + off, '%') != NULL && strchr(buf + off, ':') != NULL) {
-      // 直接跳过百分号校验
-    } else {
-      while (j < len) {
-        if (buf[off + j] == '%') {
-          if (j + 2 >= len) {
-            return 1;
-          }
-          if (!IS_HEX(buf[off + j + 1]) || !IS_HEX(buf[off + j + 2])) {
-            return 1;
-          }
-          j += 2;
-        }
-        j++;
-      }
+    if (!validate_host_percent_encoding(buf, u->field_data[UF_HOST].off, u->field_data[UF_HOST].len)) {
+      return 1;
     }
   }
 
