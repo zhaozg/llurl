@@ -4,6 +4,25 @@ CC = gcc
 CFLAGS = -Wall -Wextra -O3 -std=c99 -funroll-loops
 DEBUG_CFLAGS = -Wall -Wextra -g -std=c99 -fsanitize=address
 
+# SIMD flags - auto-detect architecture
+ARCH := $(shell uname -m)
+ifeq ($(ARCH),x86_64)
+  # x86_64: Enable SSE2 (baseline, recommended for optimal performance)
+  SIMD_CFLAGS = -msse2
+  # AVX2 note: Not recommended for typical URL parsing workloads
+  # Uncomment only for extremely long URLs (> 200 chars) with extensive query strings
+  # SIMD_CFLAGS = -msse2 -mavx2
+else ifeq ($(ARCH),aarch64)
+  # ARM64: Enable NEON
+  SIMD_CFLAGS = -march=armv8-a+simd
+else ifeq ($(ARCH),arm64)
+  # ARM64 (macOS naming): Enable NEON
+  SIMD_CFLAGS = -march=armv8-a+simd
+endif
+
+# Add SIMD flags to default CFLAGS
+CFLAGS += $(SIMD_CFLAGS)
+
 # Library
 LIB_SRC = llurl.c
 LIB_OBJ = llurl.o
@@ -27,9 +46,14 @@ BENCH_SRC = benchmark.c
 BENCH_BIN = benchmark
 BENCH_CFLAGS = $(CFLAGS) -D_POSIX_C_SOURCE=199309L
 
-.PHONY: all clean test test-all test-comprehensive example run-example benchmark run-benchmark
+.PHONY: all clean test test-all test-comprehensive example run-example benchmark run-benchmark show-simd
 
 all: $(LIB_STATIC) $(LIB_SHARED) benchmark
+
+# Show SIMD configuration
+show-simd:
+	@echo "Architecture: $(ARCH)"
+	@echo "SIMD flags: $(SIMD_CFLAGS)"
 
 # Static library
 $(LIB_STATIC): $(LIB_OBJ)

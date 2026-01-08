@@ -25,6 +25,29 @@
 #include <stdio.h>
 
 /* ============================================================================
+ * SIMD SUPPORT DETECTION AND INTRINSICS
+ * ============================================================================ */
+
+/* Detect SIMD support based on architecture and compiler */
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+  #define LLURL_SIMD_X86
+  #if defined(__SSE2__) || (defined(_MSC_VER) && (defined(_M_X64) || _M_IX86_FP >= 2))
+    #define LLURL_SIMD_SSE2
+    #include <emmintrin.h>
+  #endif
+  #if defined(__AVX2__)
+    #define LLURL_SIMD_AVX2
+    #include <immintrin.h>
+  #endif
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  #define LLURL_SIMD_ARM
+  #if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    #define LLURL_SIMD_NEON
+    #include <arm_neon.h>
+  #endif
+#endif
+
+/* ============================================================================
  * CONSTANTS AND TYPE DEFINITIONS
  * ============================================================================ */
 
@@ -215,6 +238,179 @@ static const unsigned char char_class_table[256] = {
 #define IS_ALPHANUM(c) (char_flags[(unsigned char)(c)] & (CHAR_ALPHA | CHAR_DIGIT))
 #define IS_UNRESERVED(c) (char_flags[(unsigned char)(c)] & CHAR_UNRESERVED)
 #define IS_SUBDELIM(c) (char_flags[(unsigned char)(c)] & CHAR_SUBDELIM)
+
+/* ============================================================================
+ * FUSED OPERATIONS FOR HOT PATHS
+ * ============================================================================ */
+
+/* Fused operations combine multiple common checks in a single lookup
+ * These are used in performance-critical parsing paths to reduce overhead */
+
+/* Check if char is valid in userinfo AND is alphanum */
+#define IS_USERINFO_ALPHANUM(c) \
+  ((char_flags[(unsigned char)(c)] & CHAR_USERINFO) && \
+   (char_flags[(unsigned char)(c)] & (CHAR_ALPHA | CHAR_DIGIT)))
+
+/* Check if char is hex AND valid in userinfo (for IPv6 with zone ID) */
+#define IS_HEX_USERINFO(c) \
+  ((char_flags[(unsigned char)(c)] & CHAR_HEX) && \
+   (char_flags[(unsigned char)(c)] & CHAR_USERINFO))
+
+/* Check if char is alphanum OR unreserved (common in URLs) */
+#define IS_ALPHANUM_OR_UNRESERVED(c) \
+  (char_flags[(unsigned char)(c)] & (CHAR_ALPHA | CHAR_DIGIT | CHAR_UNRESERVED))
+
+/* ============================================================================
+ * SIMD-ACCELERATED CHARACTER VALIDATION
+ * ============================================================================ */
+
+#ifdef LLURL_SIMD_SSE2
+/* SSE2: Validate 16 characters at once for invalid characters
+ * Returns 1 if all characters are valid, 0 if any invalid character found */
+static inline int simd_validate_chars_sse2(const unsigned char *buf, size_t len) {
+  size_t i = 0;
+  
+  /* Process 16 bytes at a time with SSE2 */
+  while (i + 16 <= len) {
+    __m128i chars = _mm_loadu_si128((const __m128i*)(buf + i));
+    
+    /* Check for characters >= 128 (extended ASCII, all invalid) */
+    /* Compare chars > 127 to detect any character with high bit set */
+    __m128i threshold = _mm_set1_epi8(127);
+    __m128i invalid_mask = _mm_cmpgt_epi8(chars, threshold);
+    
+    /* If any characters > 127, we have invalid characters */
+    int mask = _mm_movemask_epi8(invalid_mask);
+    if (mask != 0) {
+      return 0;
+    }
+    
+    i += 16;
+  }
+  
+  /* Validate remaining bytes with scalar code */
+  while (i < len) {
+    if (char_class_table[buf[i]] == cc_invalid) {
+      return 0;
+    }
+    i++;
+  }
+  
+  return 1;
+}
+#endif /* LLURL_SIMD_SSE2 */
+
+#ifdef LLURL_SIMD_AVX2
+/* AVX2: Validate 32 characters at once for invalid characters
+ * Returns 1 if all characters are valid, 0 if any invalid character found */
+static inline int simd_validate_chars_avx2(const unsigned char *buf, size_t len) {
+  size_t i = 0;
+  
+  /* Process 32 bytes at a time with AVX2 */
+  while (i + 32 <= len) {
+    __m256i chars = _mm256_loadu_si256((const __m256i*)(buf + i));
+    
+    /* Check for characters >= 128 (extended ASCII, all invalid) */
+    /* Compare chars > 127 to detect any character with high bit set */
+    __m256i threshold = _mm256_set1_epi8(127);
+    __m256i invalid_mask = _mm256_cmpgt_epi8(chars, threshold);
+    
+    /* If any characters > 127, we have invalid characters */
+    int mask = _mm256_movemask_epi8(invalid_mask);
+    if (mask != 0) {
+      return 0;
+    }
+    
+    i += 32;
+  }
+  
+  /* Validate remaining bytes with SSE2 or scalar code */
+  #ifdef LLURL_SIMD_SSE2
+  while (i + 16 <= len) {
+    __m128i chars = _mm_loadu_si128((const __m128i*)(buf + i));
+    __m128i threshold = _mm_set1_epi8(127);
+    __m128i invalid_mask = _mm_cmpgt_epi8(chars, threshold);
+    int mask = _mm_movemask_epi8(invalid_mask);
+    if (mask != 0) {
+      return 0;
+    }
+    i += 16;
+  }
+  #endif
+  
+  /* Validate remaining bytes with scalar code */
+  while (i < len) {
+    if (char_class_table[buf[i]] == cc_invalid) {
+      return 0;
+    }
+    i++;
+  }
+  
+  return 1;
+}
+#endif /* LLURL_SIMD_AVX2 */
+
+#ifdef LLURL_SIMD_NEON
+/* NEON: Validate 16 characters at once for invalid characters (ARM)
+ * Returns 1 if all characters are valid, 0 if any invalid character found */
+static inline int simd_validate_chars_neon(const unsigned char *buf, size_t len) {
+  size_t i = 0;
+  
+  /* Process 16 bytes at a time with NEON */
+  while (i + 16 <= len) {
+    uint8x16_t chars = vld1q_u8(buf + i);
+    
+    /* Check for characters >= 128 (extended ASCII, all invalid) */
+    /* Create threshold vector with value 128 */
+    uint8x16_t threshold = vdupq_n_u8(128);
+    
+    /* Compare: chars >= 128 */
+    uint8x16_t cmp = vcgeq_u8(chars, threshold);
+    
+    /* Check if any byte is >= 128 */
+    uint8x8_t cmp_low = vget_low_u8(cmp);
+    uint8x8_t cmp_high = vget_high_u8(cmp);
+    uint8x8_t cmp_or = vorr_u8(cmp_low, cmp_high);
+    
+    /* Reduce to check if any bit is set */
+    uint64_t result = vget_lane_u64(vreinterpret_u64_u8(cmp_or), 0);
+    if (result != 0) {
+      return 0;
+    }
+    
+    i += 16;
+  }
+  
+  /* Validate remaining bytes with scalar code */
+  while (i < len) {
+    if (char_class_table[buf[i]] == cc_invalid) {
+      return 0;
+    }
+    i++;
+  }
+  
+  return 1;
+}
+#endif /* LLURL_SIMD_NEON */
+
+/* Generic SIMD validation function that dispatches to the best available implementation */
+static inline int simd_validate_chars(const unsigned char *buf, size_t len) {
+#ifdef LLURL_SIMD_AVX2
+  return simd_validate_chars_avx2(buf, len);
+#elif defined(LLURL_SIMD_SSE2)
+  return simd_validate_chars_sse2(buf, len);
+#elif defined(LLURL_SIMD_NEON)
+  return simd_validate_chars_neon(buf, len);
+#else
+  /* Fallback to scalar validation */
+  for (size_t i = 0; i < len; i++) {
+    if (char_class_table[buf[i]] == cc_invalid) {
+      return 0;
+    }
+  }
+  return 1;
+#endif
+}
 
 /* ============================================================================
  * DFA STATE TRANSITION TABLE
@@ -719,6 +915,29 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     if (state == s_path) {
       /* Look ahead to find ? or # to batch process the path */
       size_t j = i;
+      size_t chunk_end = j;
+      
+      /* First, use SIMD to validate chunks of characters if available */
+      #if defined(LLURL_SIMD_AVX2) || defined(LLURL_SIMD_SSE2) || defined(LLURL_SIMD_NEON)
+      /* Find the next delimiter or end of buffer */
+      while (chunk_end < buflen) {
+        unsigned char c = (unsigned char)buf[chunk_end];
+        if (c == '?' || c == '#') {
+          break;
+        }
+        chunk_end++;
+      }
+      
+      /* Validate the chunk with SIMD if it's large enough */
+      size_t chunk_size = chunk_end - j;
+      if (chunk_size > 0) {
+        if (!simd_validate_chars((const unsigned char*)(buf + j), chunk_size)) {
+          return 1;
+        }
+        j = chunk_end;
+      }
+      #else
+      /* Fallback to scalar validation */
       while (j < buflen) {
         unsigned char c = (unsigned char)buf[j];
         if (c == '?' || c == '#') {
@@ -729,6 +948,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         }
         j++;
       }
+      #endif
       
       if (j > i) {
         if (j < buflen) {
@@ -764,13 +984,25 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       const char *hash_pos = memchr(buf + i, '#', buflen - i);
       
       if (hash_pos) {
-        /* Found #, validate characters between current position and # */
+        /* Found #, validate characters between current position and # with SIMD */
         size_t hash_idx = hash_pos - buf;
+        size_t chunk_size = hash_idx - i;
+        
+        #if defined(LLURL_SIMD_AVX2) || defined(LLURL_SIMD_SSE2) || defined(LLURL_SIMD_NEON)
+        /* Use SIMD for validation if chunk is large enough */
+        if (chunk_size > 0) {
+          if (!simd_validate_chars((const unsigned char*)(buf + i), chunk_size)) {
+            return 1;
+          }
+        }
+        #else
+        /* Fallback to scalar validation */
         for (size_t j = i; j < hash_idx; j++) {
           if (UNLIKELY(char_class_table[(unsigned char)buf[j]] == cc_invalid)) {
             return 1;
           }
         }
+        #endif
         
         /* Save query field and transition to fragment */
         u->field_data[field].off = field_start;
@@ -782,12 +1014,24 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         i = hash_idx;
         continue;
       } else {
-        /* No # found, validate all remaining characters */
+        /* No # found, validate all remaining characters with SIMD */
+        size_t chunk_size = buflen - i;
+        
+        #if defined(LLURL_SIMD_AVX2) || defined(LLURL_SIMD_SSE2) || defined(LLURL_SIMD_NEON)
+        if (chunk_size > 0) {
+          if (!simd_validate_chars((const unsigned char*)(buf + i), chunk_size)) {
+            return 1;
+          }
+        }
+        #else
+        /* Fallback to scalar validation */
         for (size_t j = i; j < buflen; j++) {
           if (UNLIKELY(char_class_table[(unsigned char)buf[j]] == cc_invalid)) {
             return 1;
           }
         }
+        #endif
+        
         /* Query extends to end */
         i = buflen;
         break;
@@ -796,6 +1040,17 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     
     /* Fast batch processing for fragment state - validate and consume to end */
     if (state == s_fragment) {
+      size_t chunk_size = buflen - i;
+      
+      #if defined(LLURL_SIMD_AVX2) || defined(LLURL_SIMD_SSE2) || defined(LLURL_SIMD_NEON)
+      /* Use SIMD for validation */
+      if (chunk_size > 0) {
+        if (!simd_validate_chars((const unsigned char*)(buf + i), chunk_size)) {
+          return 1;
+        }
+      }
+      #else
+      /* Fallback to scalar validation */
       size_t j = i;
       while (j < buflen) {
         if (UNLIKELY(char_class_table[(unsigned char)buf[j]] == cc_invalid)) {
@@ -803,6 +1058,8 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         }
         j++;
       }
+      #endif
+      
       /* Fragment is valid, skip to end */
       i = buflen - 1;
       continue;
