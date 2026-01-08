@@ -24,3 +24,12 @@ example
 
 # Build artifacts
 /build/
+
+# Profiling files
+profile_benchmark
+profile_benchmark_debug
+callgrind.out*
+perf.data*
+*.gcda
+*.gcno
+*.gcov

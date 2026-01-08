@@ -518,11 +518,37 @@ void http_parser_url_init(struct http_parser_url *u) {
 /* Parse port number from string */
 static int parse_port(const char *buf, size_t len, uint16_t *port) {
   /* Optimized with bitmask lookup for digit validation */
-  uint32_t val = 0;
-  size_t i = 0;
+  
   if (UNLIKELY(len == 0 || len > 5)) {
     return -1;
   }
+  
+  /* Fast path for single-digit port (common in development) */
+  if (len == 1) {
+    unsigned char c = buf[0];
+    if (LIKELY(char_flags[c] & CHAR_DIGIT)) {
+      *port = c - '0';
+      return 0;
+    }
+    return -1;
+  }
+  
+  /* Fast path for two-digit ports (80, 443, 22, etc.) */
+  if (len == 2) {
+    unsigned char c0 = buf[0];
+    unsigned char c1 = buf[1];
+    if (LIKELY((char_flags[c0] & CHAR_DIGIT) && 
+               (char_flags[c1] & CHAR_DIGIT))) {
+      *port = (c0 - '0') * 10 + (c1 - '0');
+      return 0;
+    }
+    return -1;
+  }
+  
+  /* General path for 3-5 digit ports */
+  uint32_t val = 0;
+  size_t i = 0;
+  
   while (i < len) {
     unsigned char c = buf[i];
     /* Use bitmask table for branchless digit check */
@@ -557,8 +583,14 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
     size_t end = host_off + host_len - 1;
     size_t last_bracket = 0;
     int found_bracket = 0;
-    for (size_t k = host_off; k <= end; ++k) {
-      if (buf[k] == ']') { last_bracket = k; found_bracket = 1; }
+    /* Optimized: scan backwards from end to find closing bracket faster */
+    for (size_t k = end; k >= host_off; --k) {
+      if (buf[k] == ']') {
+        last_bracket = k;
+        found_bracket = 1;
+        break;  /* Stop on first (last) match */
+      }
+      if (k == host_off) break;  /* Prevent underflow */
     }
     if (!found_bracket) {
       // IPv6 host 缺少闭合 ]
@@ -609,42 +641,7 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
   return 1;
 }
 
-/* Handle protocol-relative URLs (//host/path) by adding a fake schema */
-static int parse_protocol_relative_url(const char *buf, size_t buflen,
-                                       int is_connect,
-                                       struct http_parser_url *u) {
-  const char *fake_schema = "http://";
-  size_t schema_len = strlen(fake_schema);
-  size_t fake_len = schema_len + buflen - 2;
-  char *tmp = (char *)malloc(fake_len + 1);
-  if (!tmp) return 1;
-  
-  strcpy(tmp, fake_schema);
-  memcpy(tmp + schema_len, buf + 2, buflen - 2); /* Skip original // */
-  tmp[fake_len] = '\0';
-  
-  struct http_parser_url u2;
-  http_parser_url_init(&u2);
-  int ret = http_parser_parse_url(tmp, fake_len, is_connect, &u2);
-  
-  if (ret == 0) {
-    for (int f = 0; f < UF_MAX; ++f) {
-      if (u2.field_set & (1 << f)) {
-        u->field_set |= (1 << f);
-        if (f == UF_SCHEMA) {
-          /* For input without schema, don't set protocol field */
-          continue;
-        } else {
-          u->field_data[f].off = u2.field_data[f].off >= schema_len ? u2.field_data[f].off - schema_len + 2 : 0;
-          u->field_data[f].len = u2.field_data[f].len;
-        }
-      }
-    }
-    u->port = u2.port;
-  }
-  free(tmp);
-  return ret;
-}
+
 
 /* Validate percent-encoding in host field, allowing IPv6 zone IDs */
 static int validate_host_percent_encoding(const char *buf, size_t off, size_t len) {
@@ -688,11 +685,6 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   int found_colon = 0;   /* Flag to track if we found : in host */
   int bracket_depth = 0; /* Track IPv6 bracket depth; negative = malformed (extra ]) */
 
-  /* Handle protocol-relative URLs (//host/path) */
-  if (!is_connect && buflen >= 2 && buf[0] == '/' && buf[1] == '/') {
-    return parse_protocol_relative_url(buf, buflen, is_connect, u);
-  }
-
   /* Handle empty URLs */
   if (UNLIKELY(buflen == 0)) {
     return 1;
@@ -709,11 +701,28 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     /* Fast initial state detection to avoid unnecessary transitions */
     ch = (unsigned char)buf[0];
     if (ch == '/') {
-      /* Relative URL - start directly at path */
-      state = s_path;
-      field = UF_PATH;
-      field_start = 0;
-      mark_field(u, field);
+      /* Check for protocol-relative URL (//host/path) */
+      if (buflen >= 2 && buf[1] == '/') {
+        /* Protocol-relative URL - parse directly from host without schema */
+        /* Schema is not set - caller is responsible for default schema */
+        /* Skip the leading // by starting from index 2 */
+        i = 2;
+        if (i >= buflen) {
+          /* URL is just "//" with nothing after - invalid */
+          return 1;
+        }
+        state = s_server_start;
+        field = UF_HOST;
+        field_start = i;
+        mark_field(u, field);
+        goto start_parsing; /* Jump directly to parsing loop */
+      } else {
+        /* Relative URL - start directly at path */
+        state = s_path;
+        field = UF_PATH;
+        field_start = 0;
+        mark_field(u, field);
+      }
     } else if (ch == '*') {
       /* Asterisk form - special path */
       state = s_path;
@@ -734,6 +743,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
 
   /* Optimized DFA-based parsing loop with batch processing */
   for (i = 0; i < buflen; i++) {
+start_parsing:
     ch = (unsigned char)buf[i];
 
     /* Fast batch processing for path state - scan ahead to find delimiters */
