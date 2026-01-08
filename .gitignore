@@ -6,6 +6,7 @@
 
 # Executables
 test_llurl
+test_llurl_comprehensive
 benchmark
 example
 

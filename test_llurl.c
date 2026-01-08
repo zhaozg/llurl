@@ -137,7 +137,7 @@ void test_ipv6_url() {
   print_url_result(url, &u);
 
   assert(check_field(url, &u, UF_SCHEMA, "http"));
-  assert(check_field(url, &u, UF_HOST, "[1:2::3:4]"));
+  assert(check_field(url, &u, UF_HOST, "1:2::3:4"));
   assert(check_field(url, &u, UF_PATH, "/path"));
 
   printf("✓ IPv6 URL test passed\n\n");
@@ -154,7 +154,7 @@ void test_ipv6_url_with_port() {
   print_url_result(url, &u);
 
   assert(check_field(url, &u, UF_SCHEMA, "http"));
-  assert(check_field(url, &u, UF_HOST, "[1:2::3:4]"));
+  assert(check_field(url, &u, UF_HOST, "1:2::3:4"));
   assert(check_field(url, &u, UF_PORT, "8080"));
   assert(u.port == 8080);
   assert(check_field(url, &u, UF_PATH, "/path"));

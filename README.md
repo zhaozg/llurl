@@ -14,11 +14,13 @@ A blazingly fast URL parser for C, based on llhttp's state machine approach.
 ## Building
 
 ```bash
-make              # Build static and shared libraries
-make test         # Build and run tests
-make run-example  # Build and run example program
-make run-benchmark # Build and run performance benchmarks
-make debug        # Build with debug symbols and run tests
+make                    # Build static and shared libraries
+make test               # Build and run basic tests
+make test-comprehensive # Build and run comprehensive test suite
+make test-all           # Run all tests (basic + comprehensive)
+make run-example        # Build and run example program
+make run-benchmark      # Build and run performance benchmarks
+make debug              # Build with debug symbols and run tests
 ```
 
 ## Usage
@@ -158,6 +160,51 @@ if (http_parser_parse_url(url, strlen(url), 0, &u) == 0) {
     // Path: "/path"
 }
 ```
+
+## Testing
+
+llurl includes a comprehensive test suite covering:
+
+### Test Categories
+
+1. **Positive Tests** - Valid URLs
+   - Basic HTTPS URLs with all components
+   - URLs with/without authentication and ports
+   - Relative URLs
+   - IPv4 and IPv6 addresses (including link-local)
+   - Encoded characters and special query parameters
+   - Protocol-relative URLs (//host)
+   - Various protocols (HTTP, HTTPS, FTP, WebSocket)
+
+2. **CONNECT Mode Tests**
+   - Valid host:port combinations
+   - Rejection of invalid CONNECT URLs (with path/query)
+   - IPv6 in CONNECT mode
+
+3. **Negative Tests** - Invalid URLs
+   - Empty strings
+   - Malformed hostnames (spaces, invalid characters)
+   - Invalid ports (letters, out of range)
+   - Missing components (host after schema)
+   - Malformed IPv6 addresses
+   - Control characters
+
+4. **Edge Cases**
+   - Very long URLs (1000+ characters)
+   - Boundary port numbers (0, 65535)
+   - Mixed case schemes
+   - State isolation between parser calls
+   - Special characters in queries and fragments
+
+### Running Tests
+
+```bash
+make test               # Run basic tests (13 tests)
+make test-comprehensive # Run comprehensive suite (51 tests)
+make test-all           # Run all tests
+```
+
+All tests are written in C and use assertions for validation, ensuring the parser correctly handles both valid and invalid inputs according to RFC 3986.
 
 ## Performance
 
