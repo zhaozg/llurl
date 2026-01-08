@@ -606,7 +606,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     mark_field(u, field);
   } else {
     /* Fast initial state detection to avoid unnecessary transitions */
-    ch = buf[0];
+    ch = (unsigned char)buf[0];
     if (ch == '/') {
       /* Relative URL - start directly at path */
       state = s_path;
@@ -658,7 +658,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           continue;
         } else {
           /* Reached end of buffer, no delimiter found */
-          /* Path continues to end, so just skip to end */
+          /* Path continues to end, set i = buflen so final field handling works correctly */
           i = buflen;
           break;
         }
@@ -667,6 +667,8 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       /* Handle delimiter at current position */
       ch = (unsigned char)buf[i];
       if (ch == '?' || ch == '#') {
+        /* Save path and transition to s_query_or_fragment state */
+        /* This state will be handled by the switch statement below */
         u->field_data[field].off = field_start;
         u->field_data[field].len = i - field_start;
         state = s_query_or_fragment;
@@ -696,7 +698,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           i = j - 1;
           continue;
         } else {
-          /* Reached end, no # found */
+          /* Reached end, no # found, set i = buflen for final field handling */
           i = buflen;
           break;
         }
