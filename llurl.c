@@ -550,9 +550,9 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
     unsigned char c0 = buf[0];
     unsigned char c1 = buf[1];
     unsigned char c2 = buf[2];
-    if (LIKELY((char_flags[c0] & CHAR_DIGIT) && 
-               (char_flags[c1] & CHAR_DIGIT) &&
-               (char_flags[c2] & CHAR_DIGIT))) {
+    /* Check all digits at once using bitwise AND for better performance */
+    unsigned char flags = char_flags[c0] & char_flags[c1] & char_flags[c2];
+    if (LIKELY(flags & CHAR_DIGIT)) {
       uint16_t val = (c0 - '0') * 100 + (c1 - '0') * 10 + (c2 - '0');
       *port = val;
       return 0;
@@ -566,10 +566,9 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
     unsigned char c1 = buf[1];
     unsigned char c2 = buf[2];
     unsigned char c3 = buf[3];
-    if (LIKELY((char_flags[c0] & CHAR_DIGIT) && 
-               (char_flags[c1] & CHAR_DIGIT) &&
-               (char_flags[c2] & CHAR_DIGIT) &&
-               (char_flags[c3] & CHAR_DIGIT))) {
+    /* Check all digits at once using bitwise OR for better performance */
+    unsigned char flags = char_flags[c0] & char_flags[c1] & char_flags[c2] & char_flags[c3];
+    if (LIKELY(flags & CHAR_DIGIT)) {
       uint32_t val = (c0 - '0') * 1000 + (c1 - '0') * 100 + (c2 - '0') * 10 + (c3 - '0');
       if (LIKELY(val <= 65535)) {
         *port = (uint16_t)val;
@@ -580,7 +579,7 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
     return -1;
   }
   
-  /* General path for 5 digit ports */
+  /* General path for 5+ digit ports */
   uint32_t val = 0;
   size_t i = 0;
   
