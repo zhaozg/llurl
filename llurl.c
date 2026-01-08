@@ -570,6 +570,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     memcpy(tmp + strlen(fake_schema), buf + 2, buflen - 2); // 跳过原始的 //
     tmp[fake_len] = '\0';
     struct http_parser_url u2;
+    memset(&u2, 0, sizeof(u2));
     int ret = http_parser_parse_url(tmp, fake_len, is_connect, &u2);
     if (ret == 0) {
       size_t delta = strlen(fake_schema);
@@ -596,7 +597,7 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     return 1;
   }
 
-  /* Set initial state based on request type */
+  /* Optimize: Detect initial state early to reduce branching */
   if (is_connect) {
     /* CONNECT requests expect authority form (host:port) */
     state = s_server_start;
@@ -604,15 +605,131 @@ int http_parser_parse_url(const char *buf, size_t buflen,
     field_start = 0;
     mark_field(u, field);
   } else {
-    state = s_start;
+    /* Fast initial state detection to avoid unnecessary transitions */
+    ch = (unsigned char)buf[0];
+    if (ch == '/') {
+      /* Relative URL - start directly at path */
+      state = s_path;
+      field = UF_PATH;
+      field_start = 0;
+      mark_field(u, field);
+    } else if (ch == '*') {
+      /* Asterisk form - special path */
+      state = s_path;
+      field = UF_PATH;
+      field_start = 0;
+      mark_field(u, field);
+    } else if (LIKELY(is_alpha(ch))) {
+      /* Absolute URL with schema */
+      state = s_schema;
+      field = UF_SCHEMA;
+      field_start = 0;
+      mark_field(u, field);
+    } else {
+      /* Invalid start character */
+      return 1;
+    }
   }
 
-  /* Optimized DFA-based parsing loop with hybrid approach */
+  /* Optimized DFA-based parsing loop with batch processing */
   for (i = 0; i < buflen; i++) {
-    ch = buf[i];
+    ch = (unsigned char)buf[i];
 
-    /* Fast path: use DFA table for simple state transitions */
-    if (LIKELY(state == s_schema || state == s_path || state == s_query || state == s_fragment)) {
+    /* Fast batch processing for path state - scan ahead to find delimiters */
+    if (state == s_path) {
+      /* Look ahead to find ? or # to batch process the path */
+      size_t j = i;
+      while (j < buflen) {
+        unsigned char c = (unsigned char)buf[j];
+        if (c == '?' || c == '#') {
+          break;
+        }
+        if (UNLIKELY(char_class_table[c] == cc_invalid)) {
+          return 1;
+        }
+        j++;
+      }
+      
+      if (j > i) {
+        if (j < buflen) {
+          /* Found delimiter, move to just before it */
+          i = j - 1;
+          /* Will process delimiter in next iteration */
+          continue;
+        } else {
+          /* Reached end of buffer, no delimiter found */
+          /* Path continues to end, set i = buflen so final field handling works correctly */
+          i = buflen;
+          break;
+        }
+      }
+      
+      /* Handle delimiter at current position */
+      ch = (unsigned char)buf[i];
+      if (ch == '?' || ch == '#') {
+        /* Save path and transition to s_query_or_fragment state */
+        /* This state will be handled by the switch statement below */
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = i - field_start;
+        state = s_query_or_fragment;
+        i--;
+        continue;
+      }
+      continue;
+    }
+    
+    /* Fast batch processing for query state - use memchr for hardware acceleration */
+    if (state == s_query) {
+      /* Use memchr to find '#' delimiter - hardware optimized */
+      const char *hash_pos = memchr(buf + i, '#', buflen - i);
+      
+      if (hash_pos) {
+        /* Found #, validate characters between current position and # */
+        size_t hash_idx = hash_pos - buf;
+        for (size_t j = i; j < hash_idx; j++) {
+          if (UNLIKELY(char_class_table[(unsigned char)buf[j]] == cc_invalid)) {
+            return 1;
+          }
+        }
+        
+        /* Save query field and transition to fragment */
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = hash_idx - field_start;
+        field = UF_FRAGMENT;
+        field_start = hash_idx + 1;
+        mark_field(u, field);
+        state = s_fragment;
+        i = hash_idx;
+        continue;
+      } else {
+        /* No # found, validate all remaining characters */
+        for (size_t j = i; j < buflen; j++) {
+          if (UNLIKELY(char_class_table[(unsigned char)buf[j]] == cc_invalid)) {
+            return 1;
+          }
+        }
+        /* Query extends to end */
+        i = buflen;
+        break;
+      }
+    }
+    
+    /* Fast batch processing for fragment state - validate and consume to end */
+    if (state == s_fragment) {
+      size_t j = i;
+      while (j < buflen) {
+        if (UNLIKELY(char_class_table[(unsigned char)buf[j]] == cc_invalid)) {
+          return 1;
+        }
+        j++;
+      }
+      /* Fragment is valid, skip to end */
+      i = buflen - 1;
+      continue;
+    }
+
+    /* Schema state with fast path */
+    if (state == s_schema) {
       enum state next_state = url_state_table[state][char_class_table[ch]];
 
       if (LIKELY(next_state == STAY)) {
@@ -625,30 +742,10 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       }
 
       /* Handle state exit actions */
-      if (state == s_schema && next_state == s_schema_slash) {
+      if (next_state == s_schema_slash) {
         /* End of schema - write field data */
         u->field_data[field].off = field_start;
         u->field_data[field].len = i - field_start;
-        state = next_state;
-        continue;
-      }
-
-      if (state == s_path && next_state == s_query_or_fragment) {
-        /* Path ended */
-        u->field_data[field].off = field_start;
-        u->field_data[field].len = i - field_start;
-        state = next_state;
-        i--; /* Re-process this character */
-        continue;
-      }
-
-      if (state == s_query && next_state == s_fragment) {
-        /* Query to fragment transition */
-        u->field_data[field].off = field_start;
-        u->field_data[field].len = i - field_start;
-        field = UF_FRAGMENT;
-        field_start = i + 1;
-        mark_field(u, field);
         state = next_state;
         continue;
       }
@@ -710,6 +807,29 @@ int http_parser_parse_url(const char *buf, size_t buflen,
 
       case s_server:
       case s_server_with_at: {
+        /* Batch scanning optimization for server state */
+        /* When not in bracket and seeing regular characters, scan ahead to next delimiter */
+        if (bracket_depth == 0 && ch != '@' && ch != '[' && ch != ':' && 
+            ch != '/' && ch != '?' && ch != '#' && is_userinfo_char(ch)) {
+          /* Fast scan to next delimiter */
+          size_t j = i + 1;
+          while (j < buflen) {
+            unsigned char c = (unsigned char)buf[j];
+            if (c == '@' || c == '[' || c == ':' || c == '/' || c == '?' || c == '#') {
+              break;
+            }
+            if (!is_userinfo_char(c)) {
+              return 1;
+            }
+            j++;
+          }
+          /* Skip ahead if we found multiple valid characters */
+          if (j > i + 1) {
+            i = j - 1;
+            continue;
+          }
+        }
+        
         /* 优化分支结构，减少循环内条件判断 */
         if (ch == '/') {
           if (!finalize_host_with_port(u, buf, field_start, i, port_start, found_colon)) {
@@ -751,7 +871,39 @@ int http_parser_parse_url(const char *buf, size_t buflen,
           break;
         }
         if (ch == '[') {
-          bracket_depth++;
+          /* IPv6 fast path - batch process the entire IPv6 address */
+          bracket_depth = 1;
+          size_t ipv6_start = i;
+          i++;
+          
+          /* Scan to closing bracket using memchr for speed */
+          const char *bracket_end = memchr(buf + i, ']', buflen - i);
+          
+          if (!bracket_end) {
+            /* No closing bracket found */
+            return 1;
+          }
+          
+          size_t bracket_pos = bracket_end - buf;
+          
+          /* Validate IPv6 characters between [ and ] */
+          for (size_t j = i; j < bracket_pos; j++) {
+            unsigned char c = (unsigned char)buf[j];
+            /* IPv6 chars: 0-9, a-f, A-F, :, . or % for zone ID */
+            if (c == '%') {
+              /* Zone ID detected - skip to closing bracket */
+              j++;
+              while (j < bracket_pos) j++;
+              break;
+            }
+            if (!IS_HEX(c) && c != ':' && c != '.') {
+              return 1;
+            }
+          }
+          
+          /* Move to closing bracket */
+          i = bracket_pos;
+          bracket_depth = 0;
           break;
         }
         if (ch == ']') {
@@ -767,17 +919,6 @@ int http_parser_parse_url(const char *buf, size_t buflen,
             port_start = i + 1;
           }
           break;
-        }
-        /* 允许 IPv6 host 的 zone id（%zone）部分 */
-        if (bracket_depth > 0 && buf[field_start] == '[' && ch == '%') {
-          /* 跳过 zone id，直到遇到 ']' 或字符串结束 */
-          i++;
-          while (i < buflen && buf[i] != ']') i++;
-          if (i >= buflen) {
-            return 1;
-          }
-          ch = buf[i]; /* 让主循环继续处理 ']' */
-          continue;
         }
         /* 用查表方式判断合法 userinfo 字符 */
         if (!is_userinfo_char(ch)) {
