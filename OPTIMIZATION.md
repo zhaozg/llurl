@@ -142,34 +142,7 @@ Added section dividers and better comments:
 
 ## Further Optimization Opportunities
 
-### 1. **SIMD Vectorization (Potential 2-4x speedup)**
-
-**Opportunity**: Use SIMD instructions for batch character validation in paths and queries.
-
-**Example**:
-```c
-// Current: loop-based validation
-for (size_t j = i; j < hash_idx; j++) {
-  if (UNLIKELY(char_class_table[buf[j]] == cc_invalid)) return 1;
-}
-
-// Potential: SIMD-based validation (16 chars at once)
-#ifdef __SSE2__
-  __m128i valid_mask = _mm_loadu_si128((__m128i*)(buf + j));
-  // Check 16 characters in parallel
-#endif
-```
-
-**Trade-offs**:
-- ✅ 2-4x faster for long paths/queries
-- ✅ Significant speedup on modern CPUs
-- ❌ More complex code
-- ❌ Platform-specific optimizations
-- ❌ May not benefit short URLs
-
-**Recommendation**: Consider for v2.0 if profiling shows path/query parsing is a bottleneck.
-
-### 2. **Fast Path for Common URL Patterns (Potential 10-20% speedup)**
+### 1. **Fast Path for Common URL Patterns (Potential 10-20% speedup)**
 
 **Opportunity**: Detect and fast-path the most common URL patterns.
 
@@ -190,7 +163,7 @@ if (buf[0] == '/' && buflen > 1 && buflen < 256) {
 
 **Recommendation**: Implement if benchmarks show > 50% of URLs are simple relative URLs.
 
-### 3. **Port Parsing Optimization (Potential 5-10% speedup)**
+### 2. **Port Parsing Optimization (Potential 5-10% speedup)**
 
 **Current**: Loop-based parsing with overflow checks each iteration.
 
@@ -309,8 +282,7 @@ All optimizations maintain strong security guarantees:
 5. **Enhanced documentation** - Performance tuning guide for users
 
 ### Low Priority (Future Versions)
-6. **SIMD vectorization** - Complex but potentially 2-4x improvement
-7. **Platform-specific optimizations** - ARM vs x86 tuning
+5. **Platform-specific optimizations** - ARM vs x86 tuning
 
 ## Conclusion
 
