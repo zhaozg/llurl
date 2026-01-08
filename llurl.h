@@ -87,9 +87,9 @@ void http_parser_url_init(struct http_parser_url *u);
  *   Normal:  http://example.com:8080/path?query=value#fragment
  *   Connect: example.com:8080
  */
-int http_parser_parse_url(const char *buf, size_t buflen,
+int http_parser_parse_url(const char * restrict buf, size_t buflen,
                           int is_connect,
-                          struct http_parser_url *u);
+                          struct http_parser_url * restrict u);
 
 #ifdef __cplusplus
 }

@@ -203,9 +203,11 @@ static const unsigned char char_class_table[256] = {
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define HOT_FUNCTION __attribute__((hot))
 #else
 #define LIKELY(x) (x)
 #define UNLIKELY(x) (x)
+#define HOT_FUNCTION
 #endif
 
 /* Character classification macros - now using unified bitmask lookup table */
@@ -512,10 +514,18 @@ static inline void mark_field(struct http_parser_url *u, enum http_parser_url_fi
 
 /* Initialize URL structure - public API function */
 void http_parser_url_init(struct http_parser_url *u) {
-  memset(u, 0, sizeof(*u));
+  /* Explicit initialization can be faster than memset for small structures */
+  u->field_set = 0;
+  u->port = 0;
+  /* Initialize field_data array - compiler may optimize this better than memset */
+  for (int i = 0; i < UF_MAX; i++) {
+    u->field_data[i].off = 0;
+    u->field_data[i].len = 0;
+  }
 }
 
 /* Parse port number from string */
+HOT_FUNCTION
 static int parse_port(const char *buf, size_t len, uint16_t *port) {
   /* Optimized with bitmask lookup for digit validation */
   
@@ -579,24 +589,28 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
     return -1;
   }
   
-  /* General path for 5+ digit ports */
-  uint32_t val = 0;
-  size_t i = 0;
-  
-  while (i < len) {
-    unsigned char c = buf[i];
-    /* Use bitmask table for branchless digit check */
-    if (UNLIKELY(!(char_flags[c] & CHAR_DIGIT))) {
+  /* Fast path for five-digit ports (up to 65535) */
+  if (len == 5) {
+    unsigned char c0 = buf[0];
+    unsigned char c1 = buf[1];
+    unsigned char c2 = buf[2];
+    unsigned char c3 = buf[3];
+    unsigned char c4 = buf[4];
+    /* Check all digits at once using bitwise AND */
+    unsigned char flags = char_flags[c0] & char_flags[c1] & char_flags[c2] & char_flags[c3] & char_flags[c4];
+    if (LIKELY(flags & CHAR_DIGIT)) {
+      uint32_t val = (c0 - '0') * 10000 + (c1 - '0') * 1000 + (c2 - '0') * 100 + (c3 - '0') * 10 + (c4 - '0');
+      if (LIKELY(val <= 65535)) {
+        *port = (uint16_t)val;
+        return 0;
+      }
       return -1;
     }
-    val = val * 10 + (c - '0');
-    if (UNLIKELY(val > 65535)) {
-      return -1;
-    }
-    i++;
+    return -1;
   }
-  *port = (uint16_t)val;
-  return 0;
+  
+  /* Fallback path for invalid port lengths (should never reach here with valid input) */
+  return -1;
 }
 
 /* Helper to finalize host field and extract port if present */
@@ -708,9 +722,10 @@ static inline int validate_host_percent_encoding(const char *buf, size_t off, si
 
 /* Parse a URL; return nonzero on failure */
 /* 线程安全说明：本函数无全局状态，结构体独立，适用于多线程环境。 */
-int http_parser_parse_url(const char *buf, size_t buflen,
+HOT_FUNCTION
+int http_parser_parse_url(const char * restrict buf, size_t buflen,
                           int is_connect,
-                          struct http_parser_url *u) {
+                          struct http_parser_url * restrict u) {
   enum state state;
   enum http_parser_url_fields field = UF_MAX;
   size_t field_start = 0;
