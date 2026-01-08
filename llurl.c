@@ -533,7 +533,7 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
     return -1;
   }
   
-  /* Fast path for two-digit ports (80, 443, 22, etc.) */
+  /* Fast path for two-digit ports (80, 22, etc.) */
   if (len == 2) {
     unsigned char c0 = buf[0];
     unsigned char c1 = buf[1];
@@ -545,7 +545,41 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
     return -1;
   }
   
-  /* General path for 3-5 digit ports */
+  /* Fast path for three-digit ports (443, 8080 first 3 digits, etc.) */
+  if (len == 3) {
+    unsigned char c0 = buf[0];
+    unsigned char c1 = buf[1];
+    unsigned char c2 = buf[2];
+    /* Check all digits at once using bitwise AND for better performance */
+    unsigned char flags = char_flags[c0] & char_flags[c1] & char_flags[c2];
+    if (LIKELY(flags & CHAR_DIGIT)) {
+      uint16_t val = (c0 - '0') * 100 + (c1 - '0') * 10 + (c2 - '0');
+      *port = val;
+      return 0;
+    }
+    return -1;
+  }
+  
+  /* Fast path for four-digit ports (8080, 3000, etc.) */
+  if (len == 4) {
+    unsigned char c0 = buf[0];
+    unsigned char c1 = buf[1];
+    unsigned char c2 = buf[2];
+    unsigned char c3 = buf[3];
+    /* Check all digits at once using bitwise AND for better performance */
+    unsigned char flags = char_flags[c0] & char_flags[c1] & char_flags[c2] & char_flags[c3];
+    if (LIKELY(flags & CHAR_DIGIT)) {
+      uint32_t val = (c0 - '0') * 1000 + (c1 - '0') * 100 + (c2 - '0') * 10 + (c3 - '0');
+      if (LIKELY(val <= 65535)) {
+        *port = (uint16_t)val;
+        return 0;
+      }
+      return -1;
+    }
+    return -1;
+  }
+  
+  /* General path for 5+ digit ports */
   uint32_t val = 0;
   size_t i = 0;
   
@@ -578,57 +612,51 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
                       : end_pos - field_start;
 
   // 检查是否为 IPv6 地址（以 [ 开头，] 在 host 内部且在 port 前）
-  if (host_len >= 2 && buf[host_off] == '[') {
-    // 查找最后一个 ']'，而不是假定 host_off + host_len - 1
-    size_t end = host_off + host_len - 1;
-    size_t last_bracket = 0;
-    int found_bracket = 0;
-    /* Optimized: scan backwards from end to find closing bracket faster */
-    for (size_t k = end; k >= host_off; --k) {
-      if (buf[k] == ']') {
-        last_bracket = k;
-        found_bracket = 1;
-        break;  /* Stop on first (last) match */
-      }
-      if (k == host_off) break;  /* Prevent underflow */
-    }
-    if (!found_bracket) {
+  if (UNLIKELY(host_len >= 2 && buf[host_off] == '[')) {
+    // 查找最后一个 ']' - 使用 memchr 优化搜索
+    size_t search_len = host_len;
+    const char *bracket_pos = memchr(buf + host_off + 1, ']', search_len - 1);
+    
+    if (UNLIKELY(!bracket_pos)) {
       // IPv6 host 缺少闭合 ]
       return 0;
     }
-    if (last_bracket > host_off) {
-      size_t after_bracket = last_bracket + 1;
-      // 检查 ] 后是否有 :port
-      if (after_bracket < end && buf[after_bracket] == ':') {
-        uint16_t port_val;
-        size_t port_len = end - after_bracket;
-        if (parse_port(buf + after_bracket + 1, port_len, &port_val) == 0) {
-          u->port = port_val;
-          u->field_data[UF_PORT].off = after_bracket + 1;
-          u->field_data[UF_PORT].len = port_len;
-          mark_field(u, UF_PORT);
-        } else {
-          // 端口非法
-          return 0;
-        }
+    
+    size_t last_bracket = bracket_pos - buf;
+    size_t after_bracket = last_bracket + 1;
+    
+    // 检查 ] 后是否有 :port
+    size_t end = host_off + host_len - 1;
+    if (after_bracket <= end && buf[after_bracket] == ':') {
+      uint16_t port_val;
+      size_t port_len = end - after_bracket;
+      if (LIKELY(parse_port(buf + after_bracket + 1, port_len, &port_val) == 0)) {
+        u->port = port_val;
+        u->field_data[UF_PORT].off = after_bracket + 1;
+        u->field_data[UF_PORT].len = port_len;
+        mark_field(u, UF_PORT);
         host_len = last_bracket - host_off - 1;
       } else {
-        host_len = last_bracket - host_off - 1;
+        // 端口非法
+        return 0;
       }
-      host_off += 1;
+    } else {
+      host_len = last_bracket - host_off - 1;
     }
+    host_off += 1;
   }
 
   if (found_colon && port_start > field_start && port_start < end_pos) {
     uint16_t port_val;
     size_t port_len = end_pos - port_start;
-    if (parse_port(buf + port_start, port_len, &port_val) == 0) {
+    if (LIKELY(parse_port(buf + port_start, port_len, &port_val) == 0)) {
       u->port = port_val;
       u->field_data[UF_HOST].off = host_off;
       u->field_data[UF_HOST].len = host_len;
-      mark_field(u, UF_PORT);
       u->field_data[UF_PORT].off = port_start;
       u->field_data[UF_PORT].len = port_len;
+      mark_field(u, UF_HOST);
+      mark_field(u, UF_PORT);
     } else {
       // Invalid port, return error
       return 0;
@@ -637,6 +665,7 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
     // No port, just write host
     u->field_data[UF_HOST].off = host_off;
     u->field_data[UF_HOST].len = host_len;
+    mark_field(u, UF_HOST);
   }
   return 1;
 }
@@ -644,20 +673,26 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
 
 
 /* Validate percent-encoding in host field, allowing IPv6 zone IDs */
-static int validate_host_percent_encoding(const char *buf, size_t off, size_t len) {
+static inline int validate_host_percent_encoding(const char *buf, size_t off, size_t len) {
+  /* Fast check: if no percent sign, validation is trivial */
+  const char *percent_pos = memchr(buf + off, '%', len);
+  if (!percent_pos) {
+    return 1; /* No percent encoding - valid */
+  }
+  
   /* Skip validation if this appears to be an IPv6 address with zone ID */
-  if (strchr(buf + off, '%') != NULL && strchr(buf + off, ':') != NULL) {
-    return 1; /* Valid - IPv6 with zone ID */
+  if (UNLIKELY(memchr(buf + off, ':', len) != NULL)) {
+    return 1; /* Valid - likely IPv6 with zone ID */
   }
   
   /* Validate percent encoding */
-  size_t j = 0;
+  size_t j = percent_pos - (buf + off);
   while (j < len) {
     if (buf[off + j] == '%') {
-      if (j + 2 >= len) {
+      if (UNLIKELY(j + 2 >= len)) {
         return 0; /* Invalid - incomplete percent encoding */
       }
-      if (!IS_HEX(buf[off + j + 1]) || !IS_HEX(buf[off + j + 2])) {
+      if (UNLIKELY(!IS_HEX(buf[off + j + 1]) || !IS_HEX(buf[off + j + 2]))) {
         return 0; /* Invalid - non-hex characters after % */
       }
       j += 2;
@@ -731,6 +766,59 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       mark_field(u, field);
     } else if (LIKELY(is_alpha(ch))) {
       /* Absolute URL with schema */
+      /* Fast path for common schemas - avoids character-by-character parsing */
+      /* Check for http:// or https:// */
+      if (buflen >= 7 && buf[0] == 'h' && buf[1] == 't' && buf[2] == 't' && buf[3] == 'p') {
+        if (buflen >= 8 && buf[4] == 's' && buf[5] == ':') {
+          /* "https:" found (need 6 chars: https:) */
+          u->field_data[UF_SCHEMA].off = 0;
+          u->field_data[UF_SCHEMA].len = 5;
+          mark_field(u, UF_SCHEMA);
+          i = 6;  /* Point to character after ':' */
+          state = s_schema_slash;
+          goto start_parsing;
+        } else if (buf[4] == ':') {
+          /* "http:" found (need 5 chars: http:) */
+          u->field_data[UF_SCHEMA].off = 0;
+          u->field_data[UF_SCHEMA].len = 4;
+          mark_field(u, UF_SCHEMA);
+          i = 5;  /* Point to character after ':' */
+          state = s_schema_slash;
+          goto start_parsing;
+        }
+      }
+      /* Check for ftp:// */
+      else if (buflen >= 4 && buf[0] == 'f' && buf[1] == 't' && buf[2] == 'p' && buf[3] == ':') {
+        /* "ftp:" found */
+        u->field_data[UF_SCHEMA].off = 0;
+        u->field_data[UF_SCHEMA].len = 3;
+        mark_field(u, UF_SCHEMA);
+        i = 4;  /* Point to character after ':' */
+        state = s_schema_slash;
+        goto start_parsing;
+      }
+      /* Check for ws:// or wss:// */
+      else if (buflen >= 3 && buf[0] == 'w' && buf[1] == 's') {
+        if (buflen >= 4 && buf[2] == 's' && buf[3] == ':') {
+          /* "wss:" found */
+          u->field_data[UF_SCHEMA].off = 0;
+          u->field_data[UF_SCHEMA].len = 3;
+          mark_field(u, UF_SCHEMA);
+          i = 4;  /* Point to character after ':' */
+          state = s_schema_slash;
+          goto start_parsing;
+        } else if (buf[2] == ':') {
+          /* "ws:" found */
+          u->field_data[UF_SCHEMA].off = 0;
+          u->field_data[UF_SCHEMA].len = 2;
+          mark_field(u, UF_SCHEMA);
+          i = 3;  /* Point to character after ':' */
+          state = s_schema_slash;
+          goto start_parsing;
+        }
+      }
+      
+      /* Fall back to standard schema parsing for other schemas */
       state = s_schema;
       field = UF_SCHEMA;
       field_start = 0;
@@ -998,25 +1086,32 @@ start_parsing:
           /* Scan to closing bracket using memchr for speed */
           const char *bracket_end = memchr(buf + i, ']', buflen - i);
           
-          if (!bracket_end) {
+          if (UNLIKELY(!bracket_end)) {
             /* No closing bracket found */
             return 1;
           }
           
           size_t bracket_pos = bracket_end - buf;
           
-          /* Validate IPv6 characters between [ and ] */
-          for (size_t j = i; j < bracket_pos; j++) {
-            unsigned char c = (unsigned char)buf[j];
-            /* IPv6 chars: 0-9, a-f, A-F, :, . or % for zone ID */
-            if (c == '%') {
-              /* Zone ID detected - skip to closing bracket */
-              j++;
-              while (j < bracket_pos) j++;
-              break;
+          /* Check for zone ID (% character) - use memchr for speed */
+          const char *zone_id = memchr(buf + i, '%', bracket_pos - i);
+          
+          if (zone_id) {
+            /* Zone ID detected - validate up to %, skip validation after */
+            size_t zone_pos = zone_id - buf;
+            for (size_t j = i; j < zone_pos; j++) {
+              unsigned char c = (unsigned char)buf[j];
+              if (UNLIKELY(!IS_HEX(c) && c != ':' && c != '.')) {
+                return 1;
+              }
             }
-            if (!IS_HEX(c) && c != ':' && c != '.') {
-              return 1;
+          } else {
+            /* No zone ID - validate entire IPv6 address */
+            for (size_t j = i; j < bracket_pos; j++) {
+              unsigned char c = (unsigned char)buf[j];
+              if (UNLIKELY(!IS_HEX(c) && c != ':' && c != '.')) {
+                return 1;
+              }
             }
           }
           
@@ -1068,18 +1163,18 @@ start_parsing:
   }
 
   /* Handle final field */
-  if (field != UF_MAX) {
-    if (field == UF_HOST) {
+  if (LIKELY(field != UF_MAX)) {
+    if (UNLIKELY(field == UF_HOST)) {
       /* Handle inline port parsing for final host field */
       if (!finalize_host_with_port(u, buf, field_start, i, port_start, found_colon)) {
         return 1;
       }
     } else {
-      /* 优化：仅对可能多次赋值的字段允许覆盖，其余字段只在未设置时写入 */
-      if (field == UF_PATH || field == UF_QUERY || field == UF_FRAGMENT) {
-        u->field_data[field].off = field_start;
-        u->field_data[field].len = i - field_start;
-      } else if (!(u->field_set & (1 << field))) {
+      /* Optimized: Only write field data if not already set, or if it's a field that can be updated
+       * PATH, QUERY, FRAGMENT are typically set once, so we can safely write them
+       * Other fields should only be written if not already marked */
+      if (LIKELY(field == UF_PATH || field == UF_QUERY || field == UF_FRAGMENT || 
+                 !(u->field_set & (1 << field)))) {
         u->field_data[field].off = field_start;
         u->field_data[field].len = i - field_start;
       }
@@ -1087,23 +1182,19 @@ start_parsing:
   }
 
   /* CONNECT 模式下，必须严格是 host[:port]，不能有 path/query/fragment */
-  if (is_connect) {
-    if (state != s_server && state != s_server_with_at) {
-      return 1;
-    }
-    // 检查 host 字段后是否还有多余字符（如 path/query/fragment）
-    if (i < buflen) {
+  if (UNLIKELY(is_connect)) {
+    if (UNLIKELY(state != s_server && state != s_server_with_at)) {
       return 1;
     }
     // 必须包含端口
-    if (!(u->field_set & (1 << UF_PORT))) {
+    if (UNLIKELY(!(u->field_set & (1 << UF_PORT)))) {
       return 1;
     }
-  }
-
-  /* --- ENHANCEMENT: Reject schema with no host (e.g. http://) --- */
-  if (!is_connect && (u->field_set & (1 << UF_SCHEMA)) && !(u->field_set & (1 << UF_HOST))) {
-    return 1;
+  } else {
+    /* --- ENHANCEMENT: Reject schema with no host (e.g. http://) --- */
+    if (UNLIKELY((u->field_set & (1 << UF_SCHEMA)) && !(u->field_set & (1 << UF_HOST)))) {
+      return 1;
+    }
   }
 
   /* --- ENHANCEMENT: Reject invalid percent-encoding in host, but allow IPv6 zone id --- */
