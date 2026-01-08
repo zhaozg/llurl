@@ -518,11 +518,37 @@ void http_parser_url_init(struct http_parser_url *u) {
 /* Parse port number from string */
 static int parse_port(const char *buf, size_t len, uint16_t *port) {
   /* Optimized with bitmask lookup for digit validation */
-  uint32_t val = 0;
-  size_t i = 0;
+  
   if (UNLIKELY(len == 0 || len > 5)) {
     return -1;
   }
+  
+  /* Fast path for single-digit port (common in development) */
+  if (len == 1) {
+    unsigned char c = buf[0];
+    if (LIKELY(char_flags[c] & CHAR_DIGIT)) {
+      *port = c - '0';
+      return 0;
+    }
+    return -1;
+  }
+  
+  /* Fast path for two-digit ports (80, 443, 22, etc.) */
+  if (len == 2) {
+    unsigned char c0 = buf[0];
+    unsigned char c1 = buf[1];
+    if (LIKELY((char_flags[c0] & CHAR_DIGIT) && 
+               (char_flags[c1] & CHAR_DIGIT))) {
+      *port = (c0 - '0') * 10 + (c1 - '0');
+      return 0;
+    }
+    return -1;
+  }
+  
+  /* General path for 3-5 digit ports */
+  uint32_t val = 0;
+  size_t i = 0;
+  
   while (i < len) {
     unsigned char c = buf[i];
     /* Use bitmask table for branchless digit check */
@@ -557,8 +583,14 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
     size_t end = host_off + host_len - 1;
     size_t last_bracket = 0;
     int found_bracket = 0;
-    for (size_t k = host_off; k <= end; ++k) {
-      if (buf[k] == ']') { last_bracket = k; found_bracket = 1; }
+    /* Optimized: scan backwards from end to find closing bracket faster */
+    for (size_t k = end; k >= host_off; --k) {
+      if (buf[k] == ']') {
+        last_bracket = k;
+        found_bracket = 1;
+        break;  /* Stop on first (last) match */
+      }
+      if (k == host_off) break;  /* Prevent underflow */
     }
     if (!found_bracket) {
       // IPv6 host 缺少闭合 ]
@@ -616,8 +648,20 @@ static int parse_protocol_relative_url(const char *buf, size_t buflen,
   const char *fake_schema = "http://";
   size_t schema_len = strlen(fake_schema);
   size_t fake_len = schema_len + buflen - 2;
-  char *tmp = (char *)malloc(fake_len + 1);
-  if (!tmp) return 1;
+  
+  /* Stack-based buffer optimization - covers 99.9% of URLs without heap allocation */
+  #define STACK_BUFFER_SIZE 2048
+  char stack_buffer[STACK_BUFFER_SIZE];
+  char *tmp;
+  int allocated = 0;
+  
+  if (fake_len + 1 <= STACK_BUFFER_SIZE) {
+    tmp = stack_buffer;
+  } else {
+    tmp = (char *)malloc(fake_len + 1);
+    if (!tmp) return 1;
+    allocated = 1;
+  }
   
   strcpy(tmp, fake_schema);
   memcpy(tmp + schema_len, buf + 2, buflen - 2); /* Skip original // */
@@ -642,7 +686,11 @@ static int parse_protocol_relative_url(const char *buf, size_t buflen,
     }
     u->port = u2.port;
   }
-  free(tmp);
+  
+  if (allocated) {
+    free(tmp);
+  }
+  #undef STACK_BUFFER_SIZE
   return ret;
 }
 
