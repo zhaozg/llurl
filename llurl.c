@@ -22,6 +22,11 @@
 #include "llurl.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+
+/* ============================================================================
+ * CONSTANTS AND TYPE DEFINITIONS
+ * ============================================================================ */
 
 /* State machine states for URL parsing */
 enum state {
@@ -74,11 +79,23 @@ enum char_class {
   cc_num_char_classes
 };
 
-/* Character classification lookup tables for performance */
+/* ============================================================================
+ * CHARACTER CLASSIFICATION LOOKUP TABLES
+ * ============================================================================ */
 
-/* Lookup table for userinfo characters (user:pass@host) */
-/* Includes ALPHANUM + MARK + %:;&=+$, */
-static const unsigned char userinfo_char[256] = {
+/* Character class bitmask flags */
+#define CHAR_ALPHA       0x01  /* a-z, A-Z */
+#define CHAR_DIGIT       0x02  /* 0-9 */
+#define CHAR_HEX         0x04  /* 0-9, a-f, A-F */
+#define CHAR_UNRESERVED  0x08  /* - . _ ~ */
+#define CHAR_SUBDELIM    0x10  /* ! $ & ' ( ) * + , ; = */
+#define CHAR_USERINFO    0x20  /* Characters valid in userinfo */
+
+/* Unified character classification lookup table (256 bytes)
+ * Uses bitmask flags to support multiple character classes per character
+ * Allows single lookup to check multiple character properties
+ */
+static const unsigned char char_flags[256] = {
 /*   0 nul    1 soh    2 stx    3 etx    4 eot    5 enq    6 ack    7 bel  */
         0,       0,       0,       0,       0,       0,       0,       0,
 /*   8 bs     9 ht    10 nl    11 vt    12 np    13 cr    14 so    15 si   */
@@ -88,29 +105,36 @@ static const unsigned char userinfo_char[256] = {
 /*  24 can   25 em    26 sub   27 esc   28 fs    29 gs    30 rs    31 us  */
         0,       0,       0,       0,       0,       0,       0,       0,
 /*  32 sp    33  !    34  "    35  #    36  $    37  %    38  &    39  '  */
-        0,       1,       0,       0,       1,       1,       1,       1,
+        0, CHAR_SUBDELIM|CHAR_USERINFO, 0, 0, CHAR_SUBDELIM|CHAR_USERINFO, CHAR_USERINFO, CHAR_SUBDELIM|CHAR_USERINFO, CHAR_SUBDELIM|CHAR_USERINFO,
 /*  40  (    41  )    42  *    43  +    44  ,    45  -    46  .    47  /  */
-        1,       1,       1,       1,       1,       1,       1,       0,
+  CHAR_SUBDELIM|CHAR_USERINFO, CHAR_SUBDELIM|CHAR_USERINFO, CHAR_SUBDELIM|CHAR_USERINFO, CHAR_SUBDELIM|CHAR_USERINFO, CHAR_SUBDELIM|CHAR_USERINFO, CHAR_UNRESERVED|CHAR_USERINFO, CHAR_UNRESERVED|CHAR_USERINFO, 0,
 /*  48  0    49  1    50  2    51  3    52  4    53  5    54  6    55  7  */
-        1,       1,       1,       1,       1,       1,       1,       1,
+  CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, 
+  CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO,
 /*  56  8    57  9    58  :    59  ;    60  <    61  =    62  >    63  ?  */
-        1,       1,       1,       1,       0,       1,       0,       0,
+  CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, CHAR_DIGIT|CHAR_HEX|CHAR_USERINFO, CHAR_USERINFO, CHAR_SUBDELIM|CHAR_USERINFO, 0, CHAR_SUBDELIM|CHAR_USERINFO, 0, 0,
 /*  64  @    65  A    66  B    67  C    68  D    69  E    70  F    71  G  */
-        0,       1,       1,       1,       1,       1,       1,       1,
+        0, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, 
+        CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO,
 /*  72  H    73  I    74  J    75  K    76  L    77  M    78  N    79  O  */
-        1,       1,       1,       1,       1,       1,       1,       1,
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, 
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO,
 /*  80  P    81  Q    82  R    83  S    84  T    85  U    86  V    87  W  */
-        1,       1,       1,       1,       1,       1,       1,       1,
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, 
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO,
 /*  88  X    89  Y    90  Z    91  [    92  \    93  ]    94  ^    95  _  */
-        1,       1,       1,       0,       0,       0,       0,       1,
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, 0, 0, 0, 0, CHAR_UNRESERVED|CHAR_USERINFO,
 /*  96  `    97  a    98  b    99  c   100  d   101  e   102  f   103  g  */
-        0,       1,       1,       1,       1,       1,       1,       1,
+        0, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, 
+        CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_HEX|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO,
 /* 104  h   105  i   106  j   107  k   108  l   109  m   110  n   111  o  */
-        1,       1,       1,       1,       1,       1,       1,       1,
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, 
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO,
 /* 112  p   113  q   114  r   115  s   116  t   117  u   118  v   119  w  */
-        1,       1,       1,       1,       1,       1,       1,       1,
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, 
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO,
 /* 120  x   121  y   122  z   123  {   124  |   125  }   126  ~   127 del */
-        1,       1,       1,       0,       0,       0,       1,       0,
+  CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, CHAR_ALPHA|CHAR_USERINFO, 0, 0, 0, CHAR_UNRESERVED, 0,
 /* 128-255: Extended ASCII - all invalid */
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -171,6 +195,10 @@ static const unsigned char char_class_table[256] = {
   cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid,cc_invalid
 };
 
+/* ============================================================================
+ * BRANCH PREDICTION HINTS AND OPTIMIZATION MACROS
+ * ============================================================================ */
+
 /* Branch prediction hints for performance */
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
@@ -179,6 +207,18 @@ static const unsigned char char_class_table[256] = {
 #define LIKELY(x) (x)
 #define UNLIKELY(x) (x)
 #endif
+
+/* Character classification macros - now using unified bitmask lookup table */
+#define IS_ALPHA(c) (char_flags[(unsigned char)(c)] & CHAR_ALPHA)
+#define IS_DIGIT(c) (char_flags[(unsigned char)(c)] & CHAR_DIGIT)
+#define IS_HEX(c) (char_flags[(unsigned char)(c)] & CHAR_HEX)
+#define IS_ALPHANUM(c) (char_flags[(unsigned char)(c)] & (CHAR_ALPHA | CHAR_DIGIT))
+#define IS_UNRESERVED(c) (char_flags[(unsigned char)(c)] & CHAR_UNRESERVED)
+#define IS_SUBDELIM(c) (char_flags[(unsigned char)(c)] & CHAR_SUBDELIM)
+
+/* ============================================================================
+ * DFA STATE TRANSITION TABLE
+ * ============================================================================ */
 
 /* DFA state transition table: url_state_table[current_state][char_class] = next_state
  * This table drives the state machine, eliminating most switch-case overhead
@@ -430,20 +470,18 @@ static const unsigned char url_state_table[s_num_states][cc_num_char_classes] = 
     STAY }        /* cc_rbrace */
 };
 
-/* Character classification macros for performance - expand inline */
-#define IS_ALPHA(c) (((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z'))
-#define IS_DIGIT(c) ((c) >= '0' && (c) <= '9')
-#define IS_HEX(c) (IS_DIGIT(c) || ((c) >= 'a' && (c) <= 'f') || ((c) >= 'A' && (c) <= 'F'))
-#define IS_ALPHANUM(c) (IS_ALPHA(c) || IS_DIGIT(c))
+/* ============================================================================
+ * HELPER FUNCTIONS
+ * ============================================================================ */
 
 /* Check if character is alpha */
 static inline int is_alpha(unsigned char ch) {
-  return IS_ALPHA(ch);
+  return char_flags[ch] & CHAR_ALPHA;
 }
 
 /* Check if character is valid in userinfo (user:pass@host) */
 static inline int is_userinfo_char(unsigned char ch) {
-  return userinfo_char[ch];
+  return char_flags[ch] & CHAR_USERINFO;
 }
 
 /* Mark field as present in the URL */
@@ -451,9 +489,14 @@ static inline void mark_field(struct http_parser_url *u, enum http_parser_url_fi
   u->field_set |= (1 << field);
 }
 
+/* Initialize URL structure - public API function */
+void http_parser_url_init(struct http_parser_url *u) {
+  memset(u, 0, sizeof(*u));
+}
+
 /* Parse port number from string */
 static int parse_port(const char *buf, size_t len, uint16_t *port) {
-  /* 优化：直接用内联数值转换，减少循环和分支 */
+  /* Optimized with bitmask lookup for digit validation */
   uint32_t val = 0;
   size_t i = 0;
   if (UNLIKELY(len == 0 || len > 5)) {
@@ -461,11 +504,12 @@ static int parse_port(const char *buf, size_t len, uint16_t *port) {
   }
   while (i < len) {
     unsigned char c = buf[i];
-    if (c < '0' || c > '9') {
+    /* Use bitmask table for branchless digit check */
+    if (UNLIKELY(!(char_flags[c] & CHAR_DIGIT))) {
       return -1;
     }
     val = val * 10 + (c - '0');
-    if (val > 65535) {
+    if (UNLIKELY(val > 65535)) {
       return -1;
     }
     i++;
@@ -544,9 +588,73 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
   return 1;
 }
 
+/* Handle protocol-relative URLs (//host/path) by adding a fake schema */
+static int parse_protocol_relative_url(const char *buf, size_t buflen,
+                                       int is_connect,
+                                       struct http_parser_url *u) {
+  const char *fake_schema = "http://";
+  size_t schema_len = strlen(fake_schema);
+  size_t fake_len = schema_len + buflen - 2;
+  char *tmp = (char *)malloc(fake_len + 1);
+  if (!tmp) return 1;
+  
+  strcpy(tmp, fake_schema);
+  memcpy(tmp + schema_len, buf + 2, buflen - 2); /* Skip original // */
+  tmp[fake_len] = '\0';
+  
+  struct http_parser_url u2;
+  http_parser_url_init(&u2);
+  int ret = http_parser_parse_url(tmp, fake_len, is_connect, &u2);
+  
+  if (ret == 0) {
+    for (int f = 0; f < UF_MAX; ++f) {
+      if (u2.field_set & (1 << f)) {
+        u->field_set |= (1 << f);
+        if (f == UF_SCHEMA) {
+          /* For input without schema, don't set protocol field */
+          continue;
+        } else {
+          u->field_data[f].off = u2.field_data[f].off >= schema_len ? u2.field_data[f].off - schema_len + 2 : 0;
+          u->field_data[f].len = u2.field_data[f].len;
+        }
+      }
+    }
+    u->port = u2.port;
+  }
+  free(tmp);
+  return ret;
+}
+
+/* Validate percent-encoding in host field, allowing IPv6 zone IDs */
+static int validate_host_percent_encoding(const char *buf, size_t off, size_t len) {
+  /* Skip validation if this appears to be an IPv6 address with zone ID */
+  if (strchr(buf + off, '%') != NULL && strchr(buf + off, ':') != NULL) {
+    return 1; /* Valid - IPv6 with zone ID */
+  }
+  
+  /* Validate percent encoding */
+  size_t j = 0;
+  while (j < len) {
+    if (buf[off + j] == '%') {
+      if (j + 2 >= len) {
+        return 0; /* Invalid - incomplete percent encoding */
+      }
+      if (!IS_HEX(buf[off + j + 1]) || !IS_HEX(buf[off + j + 2])) {
+        return 0; /* Invalid - non-hex characters after % */
+      }
+      j += 2;
+    }
+    j++;
+  }
+  return 1; /* Valid */
+}
+
+/* ============================================================================
+ * MAIN URL PARSING FUNCTION
+ * ============================================================================ */
+
 /* Parse a URL; return nonzero on failure */
 /* 线程安全说明：本函数无全局状态，结构体独立，适用于多线程环境。 */
-#include <stdio.h>
 int http_parser_parse_url(const char *buf, size_t buflen,
                           int is_connect,
                           struct http_parser_url *u) {
@@ -559,37 +667,9 @@ int http_parser_parse_url(const char *buf, size_t buflen,
   int found_colon = 0;   /* Flag to track if we found : in host */
   int bracket_depth = 0; /* Track IPv6 bracket depth; negative = malformed (extra ]) */
 
-  /* --- ENHANCEMENT: Support //host/path as host+path (no schema, not CONNECT mode) --- */
+  /* Handle protocol-relative URLs (//host/path) */
   if (!is_connect && buflen >= 2 && buf[0] == '/' && buf[1] == '/') {
-    // 构造一个临时带 schema 的字符串
-    const char *fake_schema = "http://";
-    size_t fake_len = strlen(fake_schema) + buflen - 2;
-    char *tmp = (char *)malloc(fake_len + 1);
-    if (!tmp) return 1;
-    strcpy(tmp, fake_schema);
-    memcpy(tmp + strlen(fake_schema), buf + 2, buflen - 2); // 跳过原始的 //
-    tmp[fake_len] = '\0';
-    struct http_parser_url u2;
-    memset(&u2, 0, sizeof(u2));
-    int ret = http_parser_parse_url(tmp, fake_len, is_connect, &u2);
-    if (ret == 0) {
-      size_t delta = strlen(fake_schema);
-      for (int f = 0; f < UF_MAX; ++f) {
-        if (u2.field_set & (1 << f)) {
-          u->field_set |= (1 << f);
-          if (f == UF_SCHEMA) {
-            // 对于无 schema 的输入，不设置 protocol 字段
-            continue;
-          } else {
-            u->field_data[f].off = u2.field_data[f].off >= delta ? u2.field_data[f].off - delta + 2 : 0;
-            u->field_data[f].len = u2.field_data[f].len;
-          }
-        }
-      }
-      u->port = u2.port;
-    }
-    free(tmp);
-    return ret;
+    return parse_protocol_relative_url(buf, buflen, is_connect, u);
   }
 
   /* Handle empty URLs */
@@ -873,7 +953,6 @@ int http_parser_parse_url(const char *buf, size_t buflen,
         if (ch == '[') {
           /* IPv6 fast path - batch process the entire IPv6 address */
           bracket_depth = 1;
-          size_t ipv6_start = i;
           i++;
           
           /* Scan to closing bracket using memchr for speed */
@@ -989,24 +1068,8 @@ int http_parser_parse_url(const char *buf, size_t buflen,
 
   /* --- ENHANCEMENT: Reject invalid percent-encoding in host, but allow IPv6 zone id --- */
   if (u->field_set & (1 << UF_HOST)) {
-    size_t off = u->field_data[UF_HOST].off;
-    size_t len = u->field_data[UF_HOST].len;
-    size_t j = 0;
-    if (strchr(buf + off, '%') != NULL && strchr(buf + off, ':') != NULL) {
-      // 直接跳过百分号校验
-    } else {
-      while (j < len) {
-        if (buf[off + j] == '%') {
-          if (j + 2 >= len) {
-            return 1;
-          }
-          if (!IS_HEX(buf[off + j + 1]) || !IS_HEX(buf[off + j + 2])) {
-            return 1;
-          }
-          j += 2;
-        }
-        j++;
-      }
+    if (!validate_host_percent_encoding(buf, u->field_data[UF_HOST].off, u->field_data[UF_HOST].len)) {
+      return 1;
     }
   }
 
