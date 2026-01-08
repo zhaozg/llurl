@@ -766,6 +766,54 @@ int http_parser_parse_url(const char *buf, size_t buflen,
       mark_field(u, field);
     } else if (LIKELY(is_alpha(ch))) {
       /* Absolute URL with schema */
+      /* Fast path for common schemas - avoids character-by-character parsing */
+      if (buflen >= 7 && buf[0] == 'h' && buf[1] == 't' && buf[2] == 't' && buf[3] == 'p') {
+        if (buf[4] == ':') {
+          /* "http:" found */
+          u->field_data[UF_SCHEMA].off = 0;
+          u->field_data[UF_SCHEMA].len = 4;
+          mark_field(u, UF_SCHEMA);
+          i = 5;  /* Point to character after ':' */
+          state = s_schema_slash;
+          goto start_parsing;
+        } else if (buflen >= 8 && buf[4] == 's' && buf[5] == ':') {
+          /* "https:" found */
+          u->field_data[UF_SCHEMA].off = 0;
+          u->field_data[UF_SCHEMA].len = 5;
+          mark_field(u, UF_SCHEMA);
+          i = 6;  /* Point to character after ':' */
+          state = s_schema_slash;
+          goto start_parsing;
+        }
+      } else if (buflen >= 4 && buf[0] == 'f' && buf[1] == 't' && buf[2] == 'p' && buf[3] == ':') {
+        /* "ftp:" found */
+        u->field_data[UF_SCHEMA].off = 0;
+        u->field_data[UF_SCHEMA].len = 3;
+        mark_field(u, UF_SCHEMA);
+        i = 4;  /* Point to character after ':' */
+        state = s_schema_slash;
+        goto start_parsing;
+      } else if (buflen >= 3 && buf[0] == 'w' && buf[1] == 's') {
+        if (buf[2] == ':') {
+          /* "ws:" found */
+          u->field_data[UF_SCHEMA].off = 0;
+          u->field_data[UF_SCHEMA].len = 2;
+          mark_field(u, UF_SCHEMA);
+          i = 3;  /* Point to character after ':' */
+          state = s_schema_slash;
+          goto start_parsing;
+        } else if (buflen >= 4 && buf[2] == 's' && buf[3] == ':') {
+          /* "wss:" found */
+          u->field_data[UF_SCHEMA].off = 0;
+          u->field_data[UF_SCHEMA].len = 3;
+          mark_field(u, UF_SCHEMA);
+          i = 4;  /* Point to character after ':' */
+          state = s_schema_slash;
+          goto start_parsing;
+        }
+      }
+      
+      /* Fall back to standard schema parsing for other schemas */
       state = s_schema;
       field = UF_SCHEMA;
       field_start = 0;
