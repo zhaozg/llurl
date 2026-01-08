@@ -7,9 +7,10 @@ DEBUG_CFLAGS = -Wall -Wextra -g -std=c99 -fsanitize=address
 # SIMD flags - auto-detect architecture
 ARCH := $(shell uname -m)
 ifeq ($(ARCH),x86_64)
-  # x86_64: Enable SSE2 (baseline) and optionally AVX2
+  # x86_64: Enable SSE2 (baseline, recommended for optimal performance)
   SIMD_CFLAGS = -msse2
-  # Uncomment to enable AVX2 for better performance (requires AVX2-capable CPU)
+  # AVX2 note: Not recommended for typical URL parsing workloads
+  # Uncomment only for extremely long URLs (> 200 chars) with extensive query strings
   # SIMD_CFLAGS = -msse2 -mavx2
 else ifeq ($(ARCH),aarch64)
   # ARM64: Enable NEON
