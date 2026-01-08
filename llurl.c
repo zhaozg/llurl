@@ -22,6 +22,7 @@
 #include "llurl.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 /* ============================================================================
  * CONSTANTS AND TYPE DEFINITIONS
@@ -572,28 +573,28 @@ static int parse_protocol_relative_url(const char *buf, size_t buflen,
                                        int is_connect,
                                        struct http_parser_url *u) {
   const char *fake_schema = "http://";
-  size_t fake_len = strlen(fake_schema) + buflen - 2;
+  size_t schema_len = strlen(fake_schema);
+  size_t fake_len = schema_len + buflen - 2;
   char *tmp = (char *)malloc(fake_len + 1);
   if (!tmp) return 1;
   
   strcpy(tmp, fake_schema);
-  memcpy(tmp + strlen(fake_schema), buf + 2, buflen - 2); // 跳过原始的 //
+  memcpy(tmp + schema_len, buf + 2, buflen - 2); /* Skip original // */
   tmp[fake_len] = '\0';
   
   struct http_parser_url u2;
-  memset(&u2, 0, sizeof(u2));
+  http_parser_url_init(&u2);
   int ret = http_parser_parse_url(tmp, fake_len, is_connect, &u2);
   
   if (ret == 0) {
-    size_t delta = strlen(fake_schema);
     for (int f = 0; f < UF_MAX; ++f) {
       if (u2.field_set & (1 << f)) {
         u->field_set |= (1 << f);
         if (f == UF_SCHEMA) {
-          // 对于无 schema 的输入，不设置 protocol 字段
+          /* For input without schema, don't set protocol field */
           continue;
         } else {
-          u->field_data[f].off = u2.field_data[f].off >= delta ? u2.field_data[f].off - delta + 2 : 0;
+          u->field_data[f].off = u2.field_data[f].off >= schema_len ? u2.field_data[f].off - schema_len + 2 : 0;
           u->field_data[f].len = u2.field_data[f].len;
         }
       }
@@ -634,7 +635,6 @@ static int validate_host_percent_encoding(const char *buf, size_t off, size_t le
 
 /* Parse a URL; return nonzero on failure */
 /* 线程安全说明：本函数无全局状态，结构体独立，适用于多线程环境。 */
-#include <stdio.h>
 int http_parser_parse_url(const char *buf, size_t buflen,
                           int is_connect,
                           struct http_parser_url *u) {
