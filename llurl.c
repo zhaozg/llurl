@@ -654,6 +654,7 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
       u->port = port_val;
       u->field_data[UF_HOST].off = host_off;
       u->field_data[UF_HOST].len = host_len;
+      mark_field(u, UF_HOST);
       mark_field(u, UF_PORT);
       u->field_data[UF_PORT].off = port_start;
       u->field_data[UF_PORT].len = port_len;
@@ -665,6 +666,7 @@ static inline int finalize_host_with_port(struct http_parser_url *u,
     // No port, just write host
     u->field_data[UF_HOST].off = host_off;
     u->field_data[UF_HOST].len = host_len;
+    mark_field(u, UF_HOST);
   }
   return 1;
 }
@@ -1116,9 +1118,14 @@ start_parsing:
         return 1;
       }
     } else {
-      /* Direct write for simple fields that are always set once */
-      u->field_data[field].off = field_start;
-      u->field_data[field].len = i - field_start;
+      /* Optimized: Only write field data if not already set, or if it's a field that can be updated
+       * PATH, QUERY, FRAGMENT are typically set once, so we can safely write them
+       * Other fields should only be written if not already marked */
+      if (LIKELY(field == UF_PATH || field == UF_QUERY || field == UF_FRAGMENT || 
+                 !(u->field_set & (1 << field)))) {
+        u->field_data[field].off = field_start;
+        u->field_data[field].len = i - field_start;
+      }
     }
   }
 
