@@ -248,13 +248,13 @@ static const unsigned char char_class_table[256] = {
 
 /* Check if char is valid in userinfo AND is alphanum */
 #define IS_USERINFO_ALPHANUM(c) \
-  ((char_flags[(unsigned char)(c)] & (CHAR_USERINFO | CHAR_ALPHA | CHAR_DIGIT)) == \
-   (CHAR_USERINFO | CHAR_ALPHA | CHAR_DIGIT))
+  ((char_flags[(unsigned char)(c)] & CHAR_USERINFO) && \
+   (char_flags[(unsigned char)(c)] & (CHAR_ALPHA | CHAR_DIGIT)))
 
 /* Check if char is hex AND valid in userinfo (for IPv6 with zone ID) */
 #define IS_HEX_USERINFO(c) \
-  ((char_flags[(unsigned char)(c)] & (CHAR_HEX | CHAR_USERINFO)) == \
-   (CHAR_HEX | CHAR_USERINFO))
+  ((char_flags[(unsigned char)(c)] & CHAR_HEX) && \
+   (char_flags[(unsigned char)(c)] & CHAR_USERINFO))
 
 /* Check if char is alphanum OR unreserved (common in URLs) */
 #define IS_ALPHANUM_OR_UNRESERVED(c) \
@@ -275,11 +275,12 @@ static inline int simd_validate_chars_sse2(const unsigned char *buf, size_t len)
     __m128i chars = _mm_loadu_si128((const __m128i*)(buf + i));
     
     /* Check for characters >= 128 (extended ASCII, all invalid) */
-    /* Create mask where each byte >= 0x80 will have high bit set */
-    __m128i high_bit_mask = _mm_cmpgt_epi8(_mm_setzero_si128(), chars);
+    /* Compare chars > 127 to detect any character with high bit set */
+    __m128i threshold = _mm_set1_epi8(127);
+    __m128i invalid_mask = _mm_cmpgt_epi8(chars, threshold);
     
-    /* If any high bits are set, we have invalid characters */
-    int mask = _mm_movemask_epi8(high_bit_mask);
+    /* If any characters > 127, we have invalid characters */
+    int mask = _mm_movemask_epi8(invalid_mask);
     if (mask != 0) {
       return 0;
     }
@@ -310,10 +311,12 @@ static inline int simd_validate_chars_avx2(const unsigned char *buf, size_t len)
     __m256i chars = _mm256_loadu_si256((const __m256i*)(buf + i));
     
     /* Check for characters >= 128 (extended ASCII, all invalid) */
-    __m256i high_bit_mask = _mm256_cmpgt_epi8(_mm256_setzero_si256(), chars);
+    /* Compare chars > 127 to detect any character with high bit set */
+    __m256i threshold = _mm256_set1_epi8(127);
+    __m256i invalid_mask = _mm256_cmpgt_epi8(chars, threshold);
     
-    /* If any high bits are set, we have invalid characters */
-    int mask = _mm256_movemask_epi8(high_bit_mask);
+    /* If any characters > 127, we have invalid characters */
+    int mask = _mm256_movemask_epi8(invalid_mask);
     if (mask != 0) {
       return 0;
     }
@@ -325,8 +328,9 @@ static inline int simd_validate_chars_avx2(const unsigned char *buf, size_t len)
   #ifdef LLURL_SIMD_SSE2
   while (i + 16 <= len) {
     __m128i chars = _mm_loadu_si128((const __m128i*)(buf + i));
-    __m128i high_bit_mask = _mm_cmpgt_epi8(_mm_setzero_si128(), chars);
-    int mask = _mm_movemask_epi8(high_bit_mask);
+    __m128i threshold = _mm_set1_epi8(127);
+    __m128i invalid_mask = _mm_cmpgt_epi8(chars, threshold);
+    int mask = _mm_movemask_epi8(invalid_mask);
     if (mask != 0) {
       return 0;
     }
