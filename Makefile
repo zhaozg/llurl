@@ -86,8 +86,10 @@ run-benchmark: $(BENCH_BIN)
 
 # Debug build
 debug: CFLAGS = $(DEBUG_CFLAGS)
-debug: clean $(TEST_BIN)
-	./$(TEST_BIN)
+debug: clean $(TEST_BIN) $(TEST_COMP_BIN) $(BENCH_BIN)
+	ASAN_OPTIONS=verbosity=2:abort_on_error=0 ./$(TEST_BIN)
+	ASAN_OPTIONS=verbosity=2:abort_on_error=0 ./$(TEST_COMP_BIN)
+	ASAN_OPTIONS=verbosity=2:abort_on_error=0 ./$(BENCH_BIN)
 
 clean:
 	rm -f $(LIB_OBJ) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN) $(TEST_COMP_BIN) $(EXAMPLE_BIN) $(BENCH_BIN)
