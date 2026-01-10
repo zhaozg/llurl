@@ -1,8 +1,6 @@
-# Unified Bitmask Lookup Table - Advanced Optimization Analysis
+# BITMASK 查表优化与性能分析
 
-## Executive Summary
-
-This document analyzes the comprehensive optimization strategy using the unified bitmask lookup table approach, achieving significant performance improvements through aggressive use of branchless operations.
+本文件详细说明 llurl 采用的统一 bitmask 查表优化原理、演进过程、性能提升与竞品对比。
 
 ## Latest Performance Results
 
@@ -46,7 +44,7 @@ static const unsigned char userinfo_char[256] = { ... };
 ### Phase 3: Unified Bitmask Table (Current)
 ```c
 #define CHAR_ALPHA       0x01
-#define CHAR_DIGIT       0x02  
+#define CHAR_DIGIT       0x02
 #define CHAR_HEX         0x04
 #define CHAR_UNRESERVED  0x08
 #define CHAR_SUBDELIM    0x10
@@ -223,7 +221,7 @@ Easy to add new character classes:
 ```assembly
 cmp    al, 'a'         ; 1 instruction
 jl     .not_lower      ; 1 branch
-cmp    al, 'z'         ; 1 instruction  
+cmp    al, 'z'         ; 1 instruction
 jg     .not_lower      ; 1 branch
 ; ... similar for uppercase
 ; Total: ~8 instructions, 4 branches

@@ -33,3 +33,4 @@ perf.data*
 *.gcda
 *.gcno
 *.gcov
+*.dSYM
