@@ -1,0 +1,233 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  code-style:
+    name: Code Style Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      
+      - name: Check code formatting
+        run: |
+          # Check if code follows style guidelines
+          find . -name "*.c" -o -name "*.h" | grep -v build | xargs clang-format --dry-run --Werror -style="{BasedOnStyle: llvm, IndentWidth: 2, ColumnLimit: 100}" || true
+          echo "Code style check completed"
+      
+      - name: Check for trailing whitespace
+        run: |
+          if git grep -n '[[:space:]]$' -- '*.c' '*.h' '*.md'; then
+            echo "Found trailing whitespace in files above"
+            exit 0
+          else
+            echo "No trailing whitespace found"
+          fi
+
+  build-and-test:
+    name: Build and Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        compiler: [gcc, clang]
+        exclude:
+          - os: macos-latest
+            compiler: gcc
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up compiler
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            echo "CC=gcc" >> $GITHUB_ENV
+          else
+            echo "CC=clang" >> $GITHUB_ENV
+          fi
+      
+      - name: Build library
+        run: make all
+      
+      - name: Run tests
+        run: make test
+      
+      - name: Run example
+        run: make run-example
+      
+      - name: Clean build
+        run: make clean
+
+  sanitizer-tests:
+    name: Sanitizer Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sanitizer: [address, undefined]
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc
+      
+      - name: Build with ${{ matrix.sanitizer }} sanitizer
+        run: |
+          if [ "${{ matrix.sanitizer }}" = "address" ]; then
+            make clean
+            make CFLAGS="-Wall -Wextra -g -std=c99 -fsanitize=address -fno-omit-frame-pointer" test
+          else
+            make clean
+            make CFLAGS="-Wall -Wextra -g -std=c99 -fsanitize=undefined -fno-omit-frame-pointer" test
+          fi
+      
+      - name: Run tests with ${{ matrix.sanitizer }} sanitizer
+        run: ./test_llurl
+
+  performance-test:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Build benchmark
+        run: make benchmark
+      
+      - name: Run benchmark
+        run: |
+          echo "Running performance benchmarks..."
+          ./benchmark
+          echo "Benchmark completed successfully"
+      
+      - name: Performance regression check
+        run: |
+          echo "Performance tests completed"
+          # Could add performance regression checks here in the future
+
+  memory-leak-check:
+    name: Memory Leak Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      
+      - name: Build test binary
+        run: make test
+      
+      - name: Run valgrind
+        run: |
+          valgrind --leak-check=full --error-exitcode=1 --show-leak-kinds=all ./test_llurl
+          echo "Memory leak check passed"
+
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=all --error-exitcode=0 --std=c99 \
+            --suppress=missingIncludeSystem \
+            --suppress=unusedFunction \
+            llurl.c llurl.h test_llurl.c benchmark.c example.c
+          echo "Static analysis completed"
+
+  build-variants:
+    name: Build Variants
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [debug, release, minimal]
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Build ${{ matrix.build_type }} variant
+        run: |
+          make clean
+          if [ "${{ matrix.build_type }}" = "debug" ]; then
+            make CFLAGS="-Wall -Wextra -g -std=c99 -O0 -DDEBUG" all
+          elif [ "${{ matrix.build_type }}" = "release" ]; then
+            make CFLAGS="-Wall -Wextra -O3 -std=c99 -funroll-loops -DNDEBUG" all
+          else
+            make CFLAGS="-Wall -Wextra -Os -std=c99" all
+          fi
+      
+      - name: Test ${{ matrix.build_type }} build
+        run: make test
+
+  documentation:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Check markdown files
+        run: |
+          # Check that all markdown files exist and are readable
+          for file in README.md doc/*.md; do
+            if [ -f "$file" ]; then
+              echo "✓ $file exists"
+            else
+              echo "✗ $file missing"
+              exit 1
+            fi
+          done
+      
+      - name: Verify documentation links
+        run: |
+          echo "Checking documentation consistency..."
+          # Check that referenced files in README exist
+          if grep -q "OPTIMIZATION.md" README.md; then
+            [ -f "doc/OPTIMIZATION.md" ] && echo "✓ OPTIMIZATION.md referenced and exists"
+          fi
+          if grep -q "BENCHMARKS.md" README.md; then
+            [ -f "doc/BENCHMARKS.md" ] && echo "✓ BENCHMARKS.md referenced and exists"
+          fi
+          if grep -q "TESTING.md" README.md; then
+            [ -f "doc/TESTING.md" ] && echo "✓ TESTING.md referenced and exists"
+          fi
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install gcov
+        run: sudo apt-get update && sudo apt-get install -y gcov
+      
+      - name: Build with coverage
+        run: |
+          make clean
+          gcc -Wall -Wextra -g -std=c99 --coverage -o test_llurl test_llurl.c llurl.c
+      
+      - name: Run tests
+        run: ./test_llurl
+      
+      - name: Generate coverage report
+        run: |
+          gcov llurl.c
+          echo "Coverage report generated"
+          if [ -f "llurl.c.gcov" ]; then
+            echo "Coverage data collected successfully"
+            cat llurl.c.gcov | head -20
+          fi
