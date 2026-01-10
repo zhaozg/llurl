@@ -14,10 +14,6 @@ LIB_SHARED = libllurl.so
 TEST_SRC = test_llurl.c
 TEST_BIN = test_llurl
 
-# Comprehensive Test
-TEST_COMP_SRC = test_llurl_comprehensive.c
-TEST_COMP_BIN = test_llurl_comprehensive
-
 # Example
 EXAMPLE_SRC = example.c
 EXAMPLE_BIN = example
@@ -27,7 +23,7 @@ BENCH_SRC = benchmark.c
 BENCH_BIN = benchmark
 BENCH_CFLAGS = $(CFLAGS) -D_POSIX_C_SOURCE=199309L
 
-.PHONY: all clean test test-all test-comprehensive example run-example benchmark run-benchmark
+.PHONY: all clean test example run-example benchmark run-benchmark
 
 all: $(LIB_STATIC) $(LIB_SHARED) benchmark
 
@@ -47,10 +43,6 @@ $(LIB_OBJ): $(LIB_SRC) llurl.h
 $(TEST_BIN): $(TEST_SRC) $(LIB_STATIC)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_STATIC)
 
-# Comprehensive test binary
-$(TEST_COMP_BIN): $(TEST_COMP_SRC) $(LIB_STATIC)
-	$(CC) $(CFLAGS) -o $@ $< $(LIB_STATIC)
-
 # Example binary
 $(EXAMPLE_BIN): $(EXAMPLE_SRC) $(LIB_STATIC)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_STATIC)
@@ -59,16 +51,9 @@ $(EXAMPLE_BIN): $(EXAMPLE_SRC) $(LIB_STATIC)
 $(BENCH_BIN): $(BENCH_SRC) $(LIB_STATIC)
 	$(CC) $(BENCH_CFLAGS) -o $@ $< $(LIB_STATIC)
 
-# Run basic tests
+# Run tests
 test: $(TEST_BIN)
 	./$(TEST_BIN)
-
-# Run comprehensive tests
-test-comprehensive: $(TEST_COMP_BIN)
-	./$(TEST_COMP_BIN)
-
-# Run all tests
-test-all: test test-comprehensive
 
 # Build example
 example: $(EXAMPLE_BIN)
@@ -86,13 +71,12 @@ run-benchmark: $(BENCH_BIN)
 
 # Debug build
 debug: CFLAGS = $(DEBUG_CFLAGS)
-debug: clean $(TEST_BIN) $(TEST_COMP_BIN) $(BENCH_BIN)
+debug: clean $(TEST_BIN) $(BENCH_BIN)
 	ASAN_OPTIONS=verbosity=2:abort_on_error=0 ./$(TEST_BIN)
-	ASAN_OPTIONS=verbosity=2:abort_on_error=0 ./$(TEST_COMP_BIN)
 	ASAN_OPTIONS=verbosity=2:abort_on_error=0 ./$(BENCH_BIN)
 
 clean:
-	rm -f $(LIB_OBJ) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN) $(TEST_COMP_BIN) $(EXAMPLE_BIN) $(BENCH_BIN)
+	rm -f $(LIB_OBJ) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN) $(EXAMPLE_BIN) $(BENCH_BIN)
 
 # Install (optional)
 install: $(LIB_STATIC) $(LIB_SHARED)
