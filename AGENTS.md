@@ -28,7 +28,7 @@ llurl 为超高速 C 语言 URL 解析库（llurl）， 采用状态机与查表
 
 ### 3.2 优化任务
 
-- 基于性能报告（见 `doc/PERFORMANCE_REPORT.md`）定位瓶颈，尝试 SIMD、批量处理、分支预测等优化。
+- 基于性能报告（见 `doc/BENCHMARKS.md`）定位瓶颈，尝试 SIMD、批量处理、分支预测等优化。
 - 优化内存访问、减少分支、提升查表效率。
 - 保持线程安全与零全局状态。
 
@@ -36,7 +36,7 @@ llurl 为超高速 C 语言 URL 解析库（llurl）， 采用状态机与查表
 
 - 完善 API 注释、用例说明、边界条件说明。
 - 维护测试用例文档（见 `doc/TESTING.md`）。
-- 记录优化思路、性能对比、设计权衡（见 `doc/OPTIMIZATION.md`、`doc/BITMASK_OPTIMIZATION.md`）。
+- 记录优化思路、性能对比、设计权衡（见 `doc/OPTIMIZATION.md`、`doc/BENCHMARKS.md`）。
 
 ## 4.4 开发与扩展指南
 

@@ -54,7 +54,7 @@ int main() {
 - **分支预测提示**：`LIKELY/UNLIKELY` 宏提升主路径性能
 - **缓存友好**：所有查表数据小于 1KB，充分利用 L1 cache
 
-详见 [BITMASK_OPTIMIZATION.md](doc/BITMASK_OPTIMIZATION.md)、[OPTIMIZATION.md](doc/OPTIMIZATION.md)、[PERFORMANCE_REPORT.md](doc/PERFORMANCE_REPORT.md)、[PROFILING_REPORT.md](doc/PROFILING_REPORT.md)。
+详见 [OPTIMIZATION.md](doc/OPTIMIZATION.md) 和 [BENCHMARKS.md](doc/BENCHMARKS.md)。
 
 ## 测试
 
