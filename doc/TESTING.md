@@ -4,15 +4,12 @@ This document describes the comprehensive test suite for the llurl URL parser.
 
 ## Test Files
 
-- **test_llurl.c** - Original basic test suite (13 tests)
-- **test_llurl_comprehensive.c** - Comprehensive test suite (51 tests)
+- **test_llurl.c** - Comprehensive test suite (51 tests)
 
 ## Running Tests
 
 ```bash
-make test               # Run basic tests only
-make test-comprehensive # Run comprehensive tests only
-make test-all           # Run all tests (basic + comprehensive)
+make test               # Run all tests
 ```
 
 ## Comprehensive Test Coverage

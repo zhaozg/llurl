@@ -16,9 +16,7 @@ llurl 是一个超高速 C 语言 URL 解析库，采用状态机与查表优化
 
 ```bash
 make                    # 构建静态/动态库
-make test               # 运行基础测试
-make test-comprehensive # 运行全面测试
-make test-all           # 全部测试
+make test               # 运行测试
 make run-benchmark      # 性能基准测试
 ```
 
@@ -58,8 +56,8 @@ int main() {
 
 ## 测试
 
-- **测试覆盖**：基础 + 全面测试，覆盖 50+ 种有效/无效/边界/协议场景
-- **运行方式**：`make test-all`
+- **测试覆盖**：覆盖 50+ 种有效/无效/边界/协议场景
+- **运行方式**：`make test`
 - **测试用例说明**：详见 [TESTING.md](doc/TESTING.md)
 
 ## 设计与实现
