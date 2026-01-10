@@ -1,5 +1,7 @@
 # llurl
 
+[![CI Status](https://github.com/zhaozg/llurl/workflows/CI/badge.svg)](https://github.com/zhaozg/llurl/actions)
+
 llurl 是一个超高速 C 语言 URL 解析库，采用状态机与查表优化，兼容 http-parser API，专注于高性能、零依赖、易扩展和易测试。
 
 ## 主要特性
