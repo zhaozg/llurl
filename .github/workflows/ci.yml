@@ -212,13 +212,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Install gcov
-        run: sudo apt-get update && sudo apt-get install -y gcov
-      
       - name: Build with coverage
         run: |
           make clean
-          gcc -Wall -Wextra -g -std=c99 --coverage -o test_llurl test_llurl.c llurl.c
+          gcc -Wall -Wextra -g -std=c99 --coverage -c llurl.c
+          gcc -Wall -Wextra -g -std=c99 --coverage -o test_llurl test_llurl.c llurl.o
       
       - name: Run tests
         run: ./test_llurl
